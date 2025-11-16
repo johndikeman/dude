@@ -56,7 +56,7 @@ Repository = "https://github.com/dude/dude"
 Issues = "https://github.com/dude/dude/issues"
 
 [project.scripts]
-dude = "dude.cli:app"
+dude = "dude.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
