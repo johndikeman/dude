@@ -166,6 +166,7 @@
               virtualenv
               pkgs.uv
               pkgs.nodejs_24
+              pkgs.kubernetes-helm
             ];
 
             env = {
@@ -185,6 +186,7 @@
 
               # Get repository root using git. This is expanded at runtime by the editable `.pth` machinery.
               export REPO_ROOT=$(git rev-parse --show-toplevel)
+              alias setup_openlit="helm repo add openlit https://openlit.github.io/helm/ && helm repo update && helm install openlit --set service.type=NodePort --set service.port=3000 openlit/openlit --kubeconfig=/etc/rancher/k3s/k3s.yaml"
             '';
           };
       };

@@ -10,6 +10,14 @@ from dude.agents import planner, coder
 
 logger = logging.getLogger(__name__)
 
+import dotenv
+
+dotenv.load_dotenv()
+
+import openlit
+
+openlit.init()
+
 
 # --- Setup Runner and Session ---
 async def setup_session_and_runner():
@@ -21,7 +29,10 @@ async def setup_session_and_runner():
     )
 
     orchestrator = Orchestrator(
-        planner_agent=planner, coder_agent=coder, debugger_agent=coder
+        planner_agent=planner,
+        coder_agent=coder,
+        tester_agent=coder,
+        name="orchestrator",
     )
     runner = Runner(
         agent=orchestrator,  # Pass the custom orchestrator agent
@@ -45,7 +56,11 @@ async def call_agent_async(user_input_topic: str):
 
     content = types.Content(
         role="user",
-        parts=[types.Part(text=f"Generate a story about: {user_input_topic}")],
+        parts=[
+            types.Part(
+                text=f"Add some basic nice looking logging in the UI in main.py."
+            )
+        ],
     )
 
     events = runner.run_async(
