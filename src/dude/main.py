@@ -2,10 +2,7 @@ import logging
 import sys
 import asyncio
 import uuid
-import json
-import os
 from datetime import datetime
-from pathlib import Path
 
 from google.genai import types
 from google.adk.runners import Runner
@@ -17,55 +14,29 @@ from dude.agents import planner, coder
 
 # Configure logging for CLI
 def setup_logging():
-    """Configure comprehensive logging for CLI interface with file output"""
+    """Configure comprehensive logging for CLI interface"""
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
 
     # Remove any existing handlers
     logger.handlers.clear()
 
-    # Create logs directory if it doesn't exist
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
-
-    # Generate unique log filename with timestamp and session ID
-    session_id = str(uuid.uuid4())[:8]
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = log_dir / f"dude_session_{timestamp}_{session_id}.log"
-
     # Create console handler with detailed formatting
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
 
-    # Create file handler with more detailed formatting for comprehensive logging
-    file_handler = logging.FileHandler(log_filename)
-    file_handler.setLevel(logging.DEBUG)
-
     # Create formatter with timestamp, level, function name, and message
-    console_formatter = logging.Formatter(
+    formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s] - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-
-    # File formatter includes more details
-    file_formatter = logging.Formatter(
-        "%(asctime)s.%(msecs)03d - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    console_handler.setFormatter(console_formatter)
-    file_handler.setFormatter(file_formatter)
-
+    console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
 
-    logger.info(f"Logging initialized. Log file: {log_filename}")
-    logger.info(f"Session ID: {session_id}")
-
-    return logger, log_filename
+    return logger
 
 
-logger, LOG_FILENAME = setup_logging()
+logger = setup_logging()
 
 import dotenv
 
@@ -128,7 +99,7 @@ async def setup_session_and_runner():
 async def call_agent_async(user_input_topic: str):
     """
     Sends a new topic to the agent (overwriting the initial one if needed)
-    and runs the workflow with comprehensive event and tool usage tracking.
+    and runs the workflow.
     """
     logger.info(f"call_agent_async started with topic: '{user_input_topic[:50]}...'")
 
@@ -158,68 +129,21 @@ async def call_agent_async(user_input_topic: str):
 
         final_response = "No final response captured."
         event_count = 0
-        tool_call_count = 0
 
         # Process events
         async for event in events:
             event_count += 1
+            logger.debug(f"Processing event #{event_count} from author: {event.author}")
 
-            logger.debug(f"Event #{event_count} type: {type(event).__name__}")
-
-            # Log event attributes for tool tracking
-            event_attrs = {}
-            for attr in dir(event):
-                if not attr.startswith("_") and not callable(getattr(event, attr)):
-                    try:
-                        value = getattr(event, attr)
-                        event_attrs[attr] = str(value)[:200]  # Limit length
-                    except Exception as e:
-                        event_attrs[attr] = f"<Error accessing: {e}>"
-
-            logger.debug(
-                f"Event attributes: {json.dumps(event_attrs, indent=2, default=str)}"
-            )
-
-            # Check for tool calls and executions
-            if hasattr(event, "tool_call"):
-                tool_call_count += 1
-                tool_call = event.tool_call
-                logger.info(f"Tool Call #{tool_call_count}: {tool_call}")
-
-            if hasattr(event, "tool_response"):
-                tool_response = event.tool_response
-                logger.info(f"Tool Response: {str(tool_response)[:200]}...")
-
-            # Check for usage data
-            if hasattr(event, "usage"):
-                logger.debug(f"Usage data found: {event.usage}")
-            if hasattr(event, "usage_metadata"):
-                logger.debug(f"Usage metadata found: {event.usage_metadata}")
-            if hasattr(event, "model_dump"):
-                try:
-                    event_dump = event.model_dump()
-                    logger.debug(
-                        f"Event dump: {json.dumps(event_dump, indent=2, default=str)[:500]}..."
-                    )
-                except Exception as e:
-                    logger.debug(f"Error dumping event: {e}")
-
-            # Author tracking
-            author = getattr(event, "author", "unknown")
-            logger.debug(f"Processing event #{event_count} from author: {author}")
-
-            # Final response tracking
             if event.is_final_response() and event.content and event.content.parts:
                 response_text = event.content.parts[0].text
                 logger.info(
-                    f"Final response received from [{author}]: {response_text[:100]}..."
+                    f"Final response received from [{event.author}]: {response_text[:100]}..."
                 )
                 logger.debug(f"Full response: {response_text}")
                 final_response = response_text
 
-        logger.info(
-            f"Agent execution completed. Processed {event_count} events ({tool_call_count} tool calls)"
-        )
+        logger.info(f"Agent execution completed. Processed {event_count} events")
         logger.debug(f"Final response captured: {final_response[:100]}...")
 
         print("\n--- Agent Interaction Result ---")
