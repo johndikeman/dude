@@ -1,3 +1,8 @@
+"""
+Dude AI Agent CLI - Enhanced Logging Version
+A friendly AI assistant with beautiful, informative console output.
+"""
+
 import logging
 import sys
 import asyncio
@@ -12,25 +17,113 @@ from dude.agents.orchestrator import Orchestrator
 from dude.agents import planner, coder
 
 
+# Color codes for terminal output
+class Colors:
+    """ANSI color codes for terminal output"""
+
+    CYAN = "\033[96m"
+    BLUE = "\033[94m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    MAGENTA = "\033[95m"
+    GRAY = "\033[90m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+
+
+# Emoji icons for different log levels
+ICONS = {
+    "INFO": "ℹ️ ",
+    "SUCCESS": "✅",
+    "ERROR": "❌",
+    "WARNING": "⚠️ ",
+    "DEBUG": "🐛",
+    "START": "🚀",
+    "FINISH": "🏁",
+    "SHUTDOWN": "👋",
+}
+
+
+def print_banner():
+    """Display a beautiful startup banner"""
+    banner = f"""
+{Colors.CYAN}{Colors.BOLD}
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║       dude🤖                                                  ║
+║                                                               ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+{Colors.ENDC}
+"""
+    print(banner)
+
+
+def print_user_message(text):
+    """Print user-facing messages with clean formatting"""
+    print(f"{Colors.GREEN}{text}{Colors.ENDC}")
+
+
+def print_error(text):
+    """Print error messages with consistent formatting"""
+    print(f"{Colors.RED}{ICONS['ERROR']} {text}{Colors.ENDC}")
+
+
+def print_success(text):
+    """Print success messages with consistent formatting"""
+    print(f"{Colors.GREEN}{ICONS['SUCCESS']} {text}{Colors.ENDC}")
+
+
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter with colors and emojis"""
+
+    COLOR_MAP = {
+        logging.DEBUG: Colors.GRAY,
+        logging.INFO: Colors.BLUE,
+        logging.WARNING: Colors.YELLOW,
+        logging.ERROR: Colors.RED,
+        logging.CRITICAL: Colors.RED + Colors.BOLD,
+    }
+
+    def format(self, record):
+        """Format log record with colors and simplified output"""
+        # Add emoji based on log level
+        if record.levelno == logging.INFO:
+            record.levelname = f"{ICONS['INFO']} INFO"
+        elif record.levelno == logging.DEBUG:
+            record.levelname = f"{ICONS['DEBUG']} DEBUG"
+        elif record.levelno == logging.WARNING:
+            record.levelname = f"{ICONS['WARNING']} WARN"
+        elif record.levelno == logging.ERROR:
+            record.levelname = f"{ICONS['ERROR']} ERROR"
+
+        # Apply color
+        color = self.COLOR_MAP.get(record.levelno, Colors.ENDC)
+        record.levelname = f"{color}{record.levelname}{Colors.ENDC}"
+
+        # Simplified format - just time, level, and message
+        self._style._fmt = (
+            f"{Colors.GRAY}%(asctime)s{Colors.ENDC} %(levelname)s %(message)s"
+        )
+        self.datefmt = "%H:%M:%S"
+
+        return super().format(record)
+
+
 # Configure logging for CLI
 def setup_logging():
-    """Configure comprehensive logging for CLI interface"""
+    """Configure enhanced logging for CLI interface"""
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
-
-    # Remove any existing handlers
     logger.handlers.clear()
 
-    # Create console handler with detailed formatting
+    # Console handler with colored formatting
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(logging.DEBUG)  # Show DEBUG and above to users
 
-    # Create formatter with timestamp, level, function name, and message
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s] - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    console_handler.setFormatter(formatter)
+    colored_formatter = ColoredFormatter()
+    console_handler.setFormatter(colored_formatter)
     logger.addHandler(console_handler)
 
     return logger
@@ -41,7 +134,7 @@ logger = setup_logging()
 import dotenv
 
 dotenv.load_dotenv()
-logger.debug("Environment variables loaded from .env file")
+logger.debug("✨ Environment loaded")
 
 from lmnr import Laminar
 
@@ -54,142 +147,126 @@ Laminar.initialize(
 
 # --- Setup Runner and Session ---
 async def setup_session_and_runner():
-    """Setup database session and agent runner with comprehensive logging."""
-    logger.info("Setting up session and runner")
+    """Setup database session and agent runner"""
+    logger.debug("Setting up agent infrastructure...")
 
     try:
         db_url = "sqlite:///./my_agent_data.db"
-        logger.debug(f"Using database URL: {db_url}")
+        logger.debug(f"📂 Database: {db_url}")
 
         session_service = DatabaseSessionService(db_url=db_url)
-        logger.debug("Database session service created successfully")
-
         session_id = str(uuid.uuid4())
-        logger.debug(f"Generated session ID: {session_id}")
 
         session = await session_service.create_session(
             app_name="dude", user_id="john", session_id=session_id, state={}
         )
-        logger.info(
-            f"Session created successfully for user 'john' with ID: {session_id[:8]}..."
-        )
+        logger.info(f"📱 Session created: {session_id[:8]}...")
 
-        logger.debug("Initializing orchestrator agent")
         orchestrator = Orchestrator(
             planner_agent=planner,
             coder_agent=coder,
             tester_agent=coder,
             name="orchestrator",
         )
-        logger.info("Orchestrator agent initialized")
+        logger.debug("🎯 Orchestrator ready")
 
         runner = Runner(
-            agent=orchestrator,  # Pass the custom orchestrator agent
+            agent=orchestrator,
             app_name="dude",
             session_service=session_service,
         )
-        logger.info("Runner created successfully")
+        logger.debug("🏃 Runner ready")
 
         return session_service, session, runner
 
     except Exception as e:
-        logger.error(f"Failed to setup session and runner: {str(e)}", exc_info=True)
+        logger.error(f"Setup failed: {str(e)}", exc_info=True)
         raise
 
 
 # --- Function to Interact with the Agent ---
 async def call_agent_async(user_input_topic: str):
-    """
-    Sends a new topic to the agent (overwriting the initial one if needed)
-    and runs the workflow.
-    """
-    logger.info(f"call_agent_async started with topic: '{user_input_topic[:50]}...'")
+    """Send a topic to the agent and run the workflow"""
+    logger.info(f"Processing request...")
+    logger.debug(f"Topic: {user_input_topic[:100]}...")
 
     try:
         session_service, current_session, runner = await setup_session_and_runner()
-        logger.debug(f"Session ID: {current_session.id[:8]}...")
-
-        # Update session state
         current_session.state["topic"] = user_input_topic
-        logger.info(f"Updated session state topic to: '{user_input_topic[:50]}...'")
-        logger.debug(f"Full topic content: {user_input_topic}")
+        logger.debug("💾 Topic saved to session")
 
-        # Create user message content
         content = types.Content(
             role="user",
             parts=[types.Part(text=f"{user_input_topic}")],
         )
-        logger.debug("User message content created")
 
-        # Start agent execution
-        logger.info("Starting agent execution...")
+        logger.info("🧠 Agent thinking...")
+        print()
+
         events = runner.run_async(
             user_id=current_session.user_id,
             session_id=current_session.id,
             new_message=content,
         )
 
-        final_response = "No final response captured."
+        final_response = "No response received"
         event_count = 0
 
-        # Process events
         async for event in events:
             event_count += 1
-            logger.debug(f"Processing event #{event_count} from author: {event.author}")
+            logger.debug(f"📨 Event from: {event.author}")
 
             if event.is_final_response() and event.content and event.content.parts:
                 response_text = event.content.parts[0].text
-                logger.info(
-                    f"Final response received from [{event.author}]: {response_text[:100]}..."
-                )
-                logger.debug(f"Full response: {response_text}")
+                logger.info(f"✉️  Response from {event.author}")
                 final_response = response_text
 
-        logger.info(f"Agent execution completed. Processed {event_count} events")
-        logger.debug(f"Final response captured: {final_response[:100]}...")
+        logger.info(f"✨ Completed: {event_count} steps")
 
-        print("\n--- Agent Interaction Result ---")
-        print("Agent Final Response: ", final_response)
+        print()
+        print_user_message("🤖 Agent Response:")
+        print(Colors.CYAN + "─" * 60 + Colors.ENDC)
+        print(final_response)
+        print(Colors.CYAN + "─" * 60 + Colors.ENDC)
+        print()
 
     except Exception as e:
-        logger.error(f"Error in call_agent_async: {str(e)}", exc_info=True)
+        logger.error(f"Agent error: {str(e)}", exc_info=True)
         raise
-    finally:
-        logger.info("call_agent_async completed")
 
 
 def main():
-    """Main CLI entry point with comprehensive logging and error handling."""
-    logger.info("=== Dude CLI Agent Starting ===")
-    logger.info(f"Python version: {sys.version}")
-    logger.info(f"CLI called at: {datetime.now().isoformat()}")
+    """Main CLI entry point"""
+    print_banner()
 
-    # Validate CLI arguments
+    logger.debug(f"Python {sys.version.split()[0]}")
+    logger.debug(f"Started at {datetime.now().strftime('%H:%M:%S')}")
+
+    # Validate arguments
     if len(sys.argv) < 2:
-        logger.error("No topic provided. Usage: dude <topic>")
-        print("❌ Error: No topic provided. Usage: dude <topic>")
-        logger.info("CLI shutting down due to missing argument")
+        print_error("No topic provided! Usage: dude <your-topic>")
+        print(f"\n{Colors.YELLOW}Example:{Colors.ENDC}")
+        print(f'  dude "Create a Python function to parse JSON"')
         sys.exit(1)
 
     argument = sys.argv[1]
-    logger.info(f"CLI argument received: '{argument[:50]}...'")
-    logger.debug(f"Full CLI argument: {argument}")
+    logger.info(f"Request: {argument[:60]}...")
 
     try:
-        # Run the async agent function
         asyncio.run(call_agent_async(str(argument)))
-        logger.info("Agent execution completed successfully")
-        print("\n✅ Agent execution completed successfully")
+        print_success("Mission accomplished! 🎉")
     except KeyboardInterrupt:
-        logger.warning("CLI execution interrupted by user (Ctrl+C)")
-        print("\n❌ Execution interrupted by user")
+        print_error("Cancelled by user (Ctrl+C)")
         sys.exit(130)
     except Exception as e:
-        logger.error(f"CLI execution failed: {str(e)}", exc_info=True)
-        print(f"\n❌ Execution failed: {str(e)}")
+        print_error(f"Something went wrong: {str(e)}")
         sys.exit(1)
     finally:
-        logger.info("=== Dude CLI Agent Shutting Down ===")
-        # Flush any remaining log messages
-        for handler in logger.handlers:
-            handler.flush()
+        logger.debug("Shutting down...")
+        print(
+            f"\n{Colors.MAGENTA}{ICONS['SHUTDOWN']} Thanks for using Dude!{Colors.ENDC}"
+        )
+
+
+if __name__ == "__main__":
+    main()
