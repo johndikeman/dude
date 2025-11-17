@@ -46,7 +46,9 @@ logger.debug("Environment variables loaded from .env file")
 from lmnr import Laminar
 
 Laminar.initialize(
-    project_api_key="6gbQMsICyAmUq3CYUhCT0IlzVVn44WQN2uSFKSJ7x3723fhRvVp3sGqEMyC7Hsd6"
+    base_url="http://localhost",
+    http_port=8000,
+    grpc_port=8001,
 )
 
 
