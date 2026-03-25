@@ -1,0 +1,14 @@
+[Unit]
+Description=Dude Self-Improving AI Agent
+After=network.target
+
+[Service]
+Type=simple
+User=john
+WorkingDirectory=/home/john/dude
+ExecStart=/usr/bin/nix develop --command npm start
+Restart=always
+EnvironmentFile=/home/john/dude/.env
+
+[Install]
+WantedBy=multi-user.target
