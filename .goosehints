@@ -1,1 +1,0 @@
-this project uses nix flakes and uv to manage dependencies. before running commands make sure to initialize the nix shell with `nix dev`
