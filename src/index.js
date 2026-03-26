@@ -1,5 +1,12 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const { 
+  Client, 
+  GatewayIntentBits, 
+  Partials, 
+  REST, 
+  Routes, 
+  SlashCommandBuilder 
+} = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const { execSync, spawn } = require('child_process');
@@ -8,10 +15,7 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages,
   ],
-  partials: [Partials.Channel],
 });
 
 const OWNER_ID = process.env.OWNER_ID;
@@ -39,45 +43,82 @@ function saveConfig() {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
-client.on('ready', () => {
+// Slash Command Definitions
+const commands = [
+  new SlashCommandBuilder()
+    .setName('task')
+    .setDescription('Add a new task to the queue')
+    .addStringOption(option => 
+      option.setName('description')
+        .setDescription('The task description')
+        .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('tasks')
+    .setDescription('List all pending tasks'),
+  new SlashCommandBuilder()
+    .setName('status')
+    .setDescription('Show current working directory and queue status'),
+  new SlashCommandBuilder()
+    .setName('workdir')
+    .setDescription('Change the working directory')
+    .addStringOption(option => 
+      option.setName('path')
+        .setDescription('Absolute path to the new working directory')
+        .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('start')
+    .setDescription('Start working on the next task'),
+  new SlashCommandBuilder()
+    .setName('restart')
+    .setDescription('Restart the agent process (via systemd)'),
+  new SlashCommandBuilder()
+    .setName('help')
+    .setDescription('Show help message'),
+];
+
+client.once('ready', async () => {
   log(`Logged in as ${client.user.tag}!`);
   log(`Current working directory: ${config.workDir}`);
+
+  // Register slash commands
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  try {
+    log('Started refreshing application (/) commands.');
+    await rest.put(
+      Routes.applicationCommands(client.user.id),
+      { body: commands },
+    );
+    log('Successfully reloaded application (/) commands.');
+  } catch (error) {
+    log(`Error reloading commands: ${error}`);
+  }
 });
 
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  if (OWNER_ID && message.author.id !== OWNER_ID) return;
-
-  const content = message.content.trim();
-
-  if (content.startsWith('!workdir ')) {
-    const newDir = content.slice(9).trim();
-    if (fs.existsSync(newDir)) {
-      config.workDir = path.resolve(newDir);
-      saveConfig();
-      message.reply(`Working directory updated to: ${config.workDir}`);
-    } else {
-      message.reply(`Directory does not exist: ${newDir}`);
-    }
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (OWNER_ID && interaction.user.id !== OWNER_ID) {
+    return interaction.reply({ content: 'Unauthorized.', ephemeral: true });
   }
 
-  if (content.startsWith('!task ')) {
-    const task = content.slice(6).trim();
+  const { commandName, options } = interaction;
+
+  if (commandName === 'task') {
+    const task = options.getString('description');
     addTask(task);
-    message.reply(`Task added: ${task}`);
+    await interaction.reply(`Task added: ${task}`);
   }
 
-  if (content === '!tasks') {
+  if (commandName === 'tasks') {
     const tasks = getPendingTasks();
     if (tasks.length === 0) {
-      message.reply('No pending tasks.');
+      await interaction.reply('No pending tasks.');
     } else {
       const list = tasks.map((t, i) => `${i + 1}. ${t}`).join('\n');
-      message.reply(`**Pending Tasks:**\n${list}`);
+      await interaction.reply(`**Pending Tasks:**\n${list}`);
     }
   }
 
-  if (content === '!status') {
+  if (commandName === 'status') {
     const tasks = getPendingTasks();
     const status = [
       `**Status Report**`,
@@ -85,29 +126,40 @@ client.on('messageCreate', async (message) => {
       `Pending Tasks: ${tasks.length}`,
       tasks.length > 0 ? `Next Task: ${tasks[0]}` : '',
     ].filter(Boolean).join('\n');
-    message.reply(status);
+    await interaction.reply(status);
   }
 
-  if (content === '!restart') {
-    await message.reply('Restarting agent...');
+  if (commandName === 'workdir') {
+    const newDir = options.getString('path');
+    if (fs.existsSync(newDir)) {
+      config.workDir = path.resolve(newDir);
+      saveConfig();
+      await interaction.reply(`Working directory updated to: ${config.workDir}`);
+    } else {
+      await interaction.reply(`Directory does not exist: ${newDir}`);
+    }
+  }
+
+  if (commandName === 'start') {
+    await interaction.reply('Starting self-improvement cycle...');
+    runCycle(interaction);
+  }
+
+  if (commandName === 'restart') {
+    await interaction.reply('Restarting agent...');
     process.exit(0);
   }
 
-  if (content === '!start') {
-    message.reply('Starting self-improvement cycle...');
-    runCycle(message);
-  }
-  
-  if (content === '!help') {
-    message.reply([
+  if (commandName === 'help') {
+    await interaction.reply([
       `**Commands:**`,
-      `!task <desc> - Add a task`,
-      `!tasks - List tasks`,
-      `!status - Show status`,
-      `!workdir <path> - Change working directory`,
-      `!start - Start working on the next task`,
-      `!restart - Exit and let systemd restart the agent`,
-      `!help - Show this message`
+      `/task <desc> - Add a task`,
+      `/tasks - List tasks`,
+      `/status - Show status`,
+      `/workdir <path> - Change working directory`,
+      `/start - Start working on the next task`,
+      `/restart - Restart the agent`,
+      `/help - Show this message`
     ].join('\n'));
   }
 });
@@ -126,31 +178,31 @@ async function getGeminiApiKey() {
     const token = execSync('gcloud auth print-access-token', { encoding: 'utf8' }).trim();
     const project = execSync('gcloud config get-value project', { encoding: 'utf8' }).trim();
     if (!project || project === '(unset)') {
-      console.warn('Google Cloud project is unset.');
+      log('Google Cloud project is unset.');
     }
     return JSON.stringify({ token, projectId: project });
   } catch (err) {
-    console.error('Failed to get Google Cloud token. Make sure gcloud is logged in.');
+    log('Failed to get Google Cloud token. Make sure gcloud is logged in.');
     return null;
   }
 }
 
-async function runCycle(message) {
+async function runCycle(interaction) {
   const tasks = getPendingTasks();
   if (tasks.length === 0) {
-    if (message) message.reply('No pending tasks.');
+    if (interaction) interaction.followUp('No pending tasks.');
     return;
   }
 
   const task = tasks[0];
-  if (message) message.reply(`Working on task: ${task}`);
-  console.log(`Working on task: ${task}`);
+  if (interaction) interaction.followUp(`Working on task: ${task}`);
+  log(`Working on task: ${task}`);
 
   const apiKey = await getGeminiApiKey();
   if (!apiKey) {
     const errorMsg = 'Could not obtain API key for Gemini. Make sure you are logged in via `gcloud auth login`.';
-    if (message) message.reply(errorMsg);
-    console.error(errorMsg);
+    if (interaction) interaction.followUp(errorMsg);
+    log(errorMsg);
     return;
   }
 
@@ -158,7 +210,7 @@ async function runCycle(message) {
   try {
     execSync(`git checkout -b ${branchName}`, { cwd: config.workDir });
   } catch (e) {
-    console.error('Failed to create branch. Working on current branch.');
+    log(`Failed to create branch: ${e.message}`);
   }
 
   const prompt = `You are a self-improving AI agent. 
@@ -182,7 +234,7 @@ Context:
     '-p', prompt
   ];
 
-  console.log(`Executing: pi ${piArgs.join(' ')} in ${config.workDir}`);
+  log(`Executing: pi ${piArgs.join(' ')} in ${config.workDir}`);
 
   const piProcess = spawn('pi', piArgs, { 
     stdio: 'inherit',
@@ -191,8 +243,8 @@ Context:
 
   piProcess.on('close', (code) => {
     if (code === 0) {
-      console.log('pi finished successfully.');
-      if (message) message.reply(`Task "${task}" implemented by pi. Creating PR...`);
+      log('pi finished successfully.');
+      if (interaction) interaction.followUp(`Task "${task}" implemented by pi. Creating PR...`);
       
       try {
         execSync('git add .', { cwd: config.workDir });
@@ -202,17 +254,17 @@ Context:
           encoding: 'utf8',
           cwd: config.workDir 
         }).trim();
-        if (message) message.reply(`PR created: ${prUrl}`);
+        if (interaction) interaction.followUp(`PR created: ${prUrl}`);
         markTaskDone(task);
       } catch (err) {
         const errorMsg = `Failed to commit/PR: ${err.message}`;
-        if (message) message.reply(errorMsg);
-        console.error(errorMsg);
+        if (interaction) interaction.followUp(errorMsg);
+        log(errorMsg);
       }
     } else {
       const errorMsg = `pi failed with code ${code}`;
-      if (message) message.reply(errorMsg);
-      console.error(errorMsg);
+      if (interaction) interaction.followUp(errorMsg);
+      log(errorMsg);
     }
   });
 }
