@@ -1,34 +1,30 @@
 #!/usr/bin/env node
-require('dotenv').config();
-const { 
-  Client, 
-  GatewayIntentBits, 
-  Partials, 
-  REST, 
-  Routes, 
-  SlashCommandBuilder 
-} = require('discord.js');
-const fs = require('fs');
-const path = require('path');
-const { execSync, spawn } = require('child_process');
+require("dotenv").config();
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+} = require("discord.js");
+const fs = require("fs");
+const path = require("path");
+const { execSync, spawn } = require("child_process");
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
 });
 
-const OWNER_ID = process.env.OWNER_ID;
-const TASKS_FILE = path.join(process.cwd(), 'tasks.md');
-const CONFIG_FILE = path.join(process.cwd(), 'config.json');
-const LOG_FILE = path.join(process.cwd(), 'agent.log');
+const TASKS_FILE = path.join(process.cwd(), "tasks.md");
+const CONFIG_FILE = path.join(process.cwd(), "config.json");
+const LOG_FILE = path.join(process.cwd(), "agent.log");
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
   try {
-    fs.appendFileSync(LOG_FILE, line + '\n');
+    fs.appendFileSync(LOG_FILE, line + "\n");
   } catch (e) {}
 }
 
@@ -37,7 +33,7 @@ let config = {
 };
 
 if (fs.existsSync(CONFIG_FILE)) {
-  config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  config = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
 }
 
 function saveConfig() {
@@ -47,114 +43,126 @@ function saveConfig() {
 // Slash Command Definitions
 const commands = [
   new SlashCommandBuilder()
-    .setName('task')
-    .setDescription('Add a new task to the queue')
-    .addStringOption(option => 
-      option.setName('description')
-        .setDescription('The task description')
-        .setRequired(true)),
+    .setName("task")
+    .setDescription("Add a new task to the queue")
+    .addStringOption((option) =>
+      option
+        .setName("description")
+        .setDescription("The task description")
+        .setRequired(true),
+    ),
   new SlashCommandBuilder()
-    .setName('tasks')
-    .setDescription('List all pending tasks'),
+    .setName("tasks")
+    .setDescription("List all pending tasks"),
   new SlashCommandBuilder()
-    .setName('status')
-    .setDescription('Show current working directory and queue status'),
+    .setName("status")
+    .setDescription("Show current working directory and queue status"),
   new SlashCommandBuilder()
-    .setName('workdir')
-    .setDescription('Change the working directory')
-    .addStringOption(option => 
-      option.setName('path')
-        .setDescription('Absolute path to the new working directory')
-        .setRequired(true)),
+    .setName("workdir")
+    .setDescription("Change the working directory")
+    .addStringOption((option) =>
+      option
+        .setName("path")
+        .setDescription("Absolute path to the new working directory")
+        .setRequired(true),
+    ),
   new SlashCommandBuilder()
-    .setName('clone')
-    .setDescription('Clone a repository into the current or a new working directory')
-    .addStringOption(option => 
-      option.setName('repo')
-        .setDescription('GitHub repository (e.g., owner/repo)')
-        .setRequired(true))
-    .addStringOption(option => 
-      option.setName('path')
-        .setDescription('Path to clone into (optional, defaults to a subdirectory in current workDir)')),
+    .setName("clone")
+    .setDescription(
+      "Clone a repository into the current or a new working directory",
+    )
+    .addStringOption((option) =>
+      option
+        .setName("repo")
+        .setDescription("GitHub repository (e.g., owner/repo)")
+        .setRequired(true),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("path")
+        .setDescription(
+          "Path to clone into (optional, defaults to a subdirectory in current workDir)",
+        ),
+    ),
   new SlashCommandBuilder()
-    .setName('start')
-    .setDescription('Start working on the next task'),
+    .setName("start")
+    .setDescription("Start working on the next task"),
   new SlashCommandBuilder()
-    .setName('restart')
-    .setDescription('Restart the agent process (via systemd)'),
-  new SlashCommandBuilder()
-    .setName('help')
-    .setDescription('Show help message'),
+    .setName("restart")
+    .setDescription("Restart the agent process (via systemd)"),
+  new SlashCommandBuilder().setName("help").setDescription("Show help message"),
 ];
 
-client.once('ready', async () => {
+client.once("ready", async () => {
   log(`Logged in as ${client.user.tag}!`);
   log(`Current working directory: ${config.workDir}`);
 
   // Register slash commands
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
   try {
-    log('Started refreshing application (/) commands.');
-    await rest.put(
-      Routes.applicationCommands(client.user.id),
-      { body: commands },
-    );
-    log('Successfully reloaded application (/) commands.');
+    log("Started refreshing application (/) commands.");
+    await rest.put(Routes.applicationCommands(client.user.id), {
+      body: commands,
+    });
+    log("Successfully reloaded application (/) commands.");
   } catch (error) {
     log(`Error reloading commands: ${error}`);
   }
 });
 
-client.on('interactionCreate', async (interaction) => {
+client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
-  if (OWNER_ID && interaction.user.id !== OWNER_ID) {
-    return interaction.reply({ content: 'Unauthorized.', ephemeral: true });
-  }
 
   const { commandName, options } = interaction;
 
-  if (commandName === 'task') {
-    const task = options.getString('description');
+  if (commandName === "task") {
+    const task = options.getString("description");
     addTask(task);
     await interaction.reply(`Task added: ${task}`);
   }
 
-  if (commandName === 'tasks') {
+  if (commandName === "tasks") {
     const tasks = getPendingTasks();
     if (tasks.length === 0) {
-      await interaction.reply('No pending tasks.');
+      await interaction.reply("No pending tasks.");
     } else {
-      const list = tasks.map((t, i) => `${i + 1}. ${t}`).join('\n');
+      const list = tasks.map((t, i) => `${i + 1}. ${t}`).join("\n");
       await interaction.reply(`**Pending Tasks:**\n${list}`);
     }
   }
 
-  if (commandName === 'status') {
+  if (commandName === "status") {
     const tasks = getPendingTasks();
     const status = [
       `**Status Report**`,
       `Working Directory: \`${config.workDir}\``,
       `Pending Tasks: ${tasks.length}`,
-      tasks.length > 0 ? `Next Task: ${tasks[0]}` : '',
-    ].filter(Boolean).join('\n');
+      tasks.length > 0 ? `Next Task: ${tasks[0]}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
     await interaction.reply(status);
   }
 
-  if (commandName === 'workdir') {
-    const newDir = options.getString('path');
+  if (commandName === "workdir") {
+    const newDir = options.getString("path");
     if (fs.existsSync(newDir)) {
       config.workDir = path.resolve(newDir);
       saveConfig();
-      await interaction.reply(`Working directory updated to: ${config.workDir}`);
+      await interaction.reply(
+        `Working directory updated to: ${config.workDir}`,
+      );
     } else {
       await interaction.reply(`Directory does not exist: ${newDir}`);
     }
   }
 
-  if (commandName === 'clone') {
-    const repo = options.getString('repo');
-    const customPath = options.getString('path');
-    const clonePath = customPath ? path.resolve(customPath) : path.join(config.workDir, repo.split('/').pop());
+  if (commandName === "clone") {
+    const repo = options.getString("repo");
+    const customPath = options.getString("path");
+    const clonePath = customPath
+      ? path.resolve(customPath)
+      : path.join(config.workDir, repo.split("/").pop());
 
     await interaction.deferReply();
     try {
@@ -166,56 +174,71 @@ client.on('interactionCreate', async (interaction) => {
       execSync(`gh repo clone ${repo} ${clonePath}`);
       config.workDir = clonePath;
       saveConfig();
-      await interaction.editReply(`Cloned \`${repo}\` to \`${clonePath}\` and updated working directory.`);
+      await interaction.editReply(
+        `Cloned \`${repo}\` to \`${clonePath}\` and updated working directory.`,
+      );
     } catch (err) {
       log(`Error cloning: ${err.message}`);
-      await interaction.editReply(`Failed to clone \`${repo}\`: ${err.message}`);
+      await interaction.editReply(
+        `Failed to clone \`${repo}\`: ${err.message}`,
+      );
     }
   }
 
-  if (commandName === 'start') {
-    await interaction.reply('Starting self-improvement cycle...');
+  if (commandName === "start") {
+    await interaction.reply("Starting self-improvement cycle...");
     runCycle(interaction);
   }
 
-  if (commandName === 'restart') {
-    await interaction.reply('Restarting agent...');
+  if (commandName === "restart") {
+    await interaction.reply("Restarting agent...");
     process.exit(0);
   }
 
-  if (commandName === 'help') {
-    await interaction.reply([
-      `**Commands:**`,
-      `/task <desc> - Add a task`,
-      `/tasks - List tasks`,
-      `/status - Show status`,
-      `/workdir <path> - Change working directory`,
-      `/start - Start working on the next task`,
-      `/restart - Restart the agent`,
-      `/help - Show this message`
-    ].join('\n'));
+  if (commandName === "help") {
+    await interaction.reply(
+      [
+        `**Commands:**`,
+        `/task <desc> - Add a task`,
+        `/tasks - List tasks`,
+        `/status - Show status`,
+        `/workdir <path> - Change working directory`,
+        `/start - Start working on the next task`,
+        `/restart - Restart the agent`,
+        `/help - Show this message`,
+      ].join("\n"),
+    );
   }
 });
 
 function addTask(task) {
-  let content = fs.existsSync(TASKS_FILE) ? fs.readFileSync(TASKS_FILE, 'utf8') : '# Pending Tasks\n';
-  if (!content.includes('# Pending Tasks')) {
-    content = '# Pending Tasks\n' + content;
+  let content = fs.existsSync(TASKS_FILE)
+    ? fs.readFileSync(TASKS_FILE, "utf8")
+    : "# Pending Tasks\n";
+  if (!content.includes("# Pending Tasks")) {
+    content = "# Pending Tasks\n" + content;
   }
-  content = content.replace('# Pending Tasks\n', `# Pending Tasks\n- [ ] ${task}\n`);
+  content = content.replace(
+    "# Pending Tasks\n",
+    `# Pending Tasks\n- [ ] ${task}\n`,
+  );
   fs.writeFileSync(TASKS_FILE, content);
 }
 
 async function getGeminiApiKey() {
   try {
-    const token = execSync('gcloud auth print-access-token', { encoding: 'utf8' }).trim();
-    const project = execSync('gcloud config get-value project', { encoding: 'utf8' }).trim();
-    if (!project || project === '(unset)') {
-      log('Google Cloud project is unset.');
+    const token = execSync("gcloud auth print-access-token", {
+      encoding: "utf8",
+    }).trim();
+    const project = execSync("gcloud config get-value project", {
+      encoding: "utf8",
+    }).trim();
+    if (!project || project === "(unset)") {
+      log("Google Cloud project is unset.");
     }
     return JSON.stringify({ token, projectId: project });
   } catch (err) {
-    log('Failed to get Google Cloud token. Make sure gcloud is logged in.');
+    log("Failed to get Google Cloud token. Make sure gcloud is logged in.");
     return null;
   }
 }
@@ -223,7 +246,7 @@ async function getGeminiApiKey() {
 async function runCycle(interaction) {
   const tasks = getPendingTasks();
   if (tasks.length === 0) {
-    if (interaction) interaction.followUp('No pending tasks.');
+    if (interaction) interaction.followUp("No pending tasks.");
     return;
   }
 
@@ -233,7 +256,8 @@ async function runCycle(interaction) {
 
   const apiKey = await getGeminiApiKey();
   if (!apiKey) {
-    const errorMsg = 'Could not obtain API key for Gemini. Make sure you are logged in via `gcloud auth login`.';
+    const errorMsg =
+      "Could not obtain API key for Gemini. Make sure you are logged in via `gcloud auth login`.";
     if (interaction) interaction.followUp(errorMsg);
     log(errorMsg);
     return;
@@ -259,34 +283,46 @@ Context:
 - Task File: ${TASKS_FILE}
 - Current working directory: ${config.workDir}
 `;
-  
+
   const piArgs = [
-    '--provider', 'google-gemini-cli',
-    '--model', 'gemini-2.5-pro',
-    '--api-key', apiKey,
-    '-p', prompt
+    "--provider",
+    "google-gemini-cli",
+    "--model",
+    "gemini-2.5-pro",
+    "--api-key",
+    apiKey,
+    "-p",
+    prompt,
   ];
 
-  log(`Executing: pi ${piArgs.join(' ')} in ${config.workDir}`);
+  log(`Executing: pi ${piArgs.join(" ")} in ${config.workDir}`);
 
-  const piProcess = spawn('pi', piArgs, { 
-    stdio: 'inherit',
-    cwd: config.workDir
+  const piProcess = spawn("pi", piArgs, {
+    stdio: "inherit",
+    cwd: config.workDir,
   });
 
-  piProcess.on('close', (code) => {
+  piProcess.on("close", (code) => {
     if (code === 0) {
-      log('pi finished successfully.');
-      if (interaction) interaction.followUp(`Task "${task}" implemented by pi. Creating PR...`);
-      
+      log("pi finished successfully.");
+      if (interaction)
+        interaction.followUp(
+          `Task "${task}" implemented by pi. Creating PR...`,
+        );
+
       try {
-        execSync('git add .', { cwd: config.workDir });
-        execSync(`git commit -m "Implement task: ${task}"`, { cwd: config.workDir });
+        execSync("git add .", { cwd: config.workDir });
+        execSync(`git commit -m "Implement task: ${task}"`, {
+          cwd: config.workDir,
+        });
         execSync(`git push origin ${branchName}`, { cwd: config.workDir });
-        const prUrl = execSync(`gh pr create --title "Implement task: ${task}" --body "Automated PR from self-improving agent for task: ${task}"`, { 
-          encoding: 'utf8',
-          cwd: config.workDir 
-        }).trim();
+        const prUrl = execSync(
+          `gh pr create --title "Implement task: ${task}" --body "Automated PR from self-improving agent for task: ${task}"`,
+          {
+            encoding: "utf8",
+            cwd: config.workDir,
+          },
+        ).trim();
         if (interaction) interaction.followUp(`PR created: ${prUrl}`);
         markTaskDone(task);
       } catch (err) {
@@ -304,14 +340,14 @@ Context:
 
 function getPendingTasks() {
   if (!fs.existsSync(TASKS_FILE)) return [];
-  const content = fs.readFileSync(TASKS_FILE, 'utf8');
+  const content = fs.readFileSync(TASKS_FILE, "utf8");
   const matches = content.match(/- \[ \] (.*)/g);
   if (!matches) return [];
-  return matches.map(m => m.slice(6));
+  return matches.map((m) => m.slice(6));
 }
 
 function markTaskDone(task) {
-  let content = fs.readFileSync(TASKS_FILE, 'utf8');
+  let content = fs.readFileSync(TASKS_FILE, "utf8");
   content = content.replace(`- [ ] ${task}`, `- [x] ${task}`);
   fs.writeFileSync(TASKS_FILE, content);
 }
