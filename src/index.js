@@ -267,11 +267,15 @@ async function runCycle(interaction) {
   const prompt = `You are a self-improving AI agent. 
 Current Task: ${task}
 
-Your goal is to implement this task in the current directory (${config.workDir}).
-If the working directory is the agent's own repository, you are improving yourself.
+Your goal is to implement this task. your workspace is in (${config.workDir}).
+if the task is to improve yourself, this will be in the dude/ directory. if the directory does not exist, you can use the gh cli to clone johndikeman/dude.
+you can clone other repositories if needed.
+Create a feature branch to work on.
 Once you have implemented the task, please ensure you have tested the changes (e.g., via 'npm test' or running the code).
-Do not create PRs or commit changes; I will handle that once you finish this process.
-Just perform the requested changes and exit.
+Then, commit the code to the feature branch and open a PR using gh cli.
+make sure your final message is a summary of the work that was done, or an explanation of the failure.
+
+use lowercase writing and a semi-informal tone.
 
 Context:
 - Task File: ${TASKS_FILE}
@@ -298,36 +302,18 @@ Context:
     cwd: config.workDir,
   });
 
+  let piOutput = "";
+
+  piProcess.stdout.on("data", (data) => {
+    piOutput += data.toString();
+  });
+
   piProcess.on("close", (code) => {
     if (code === 0) {
       log("pi finished successfully.");
-      if (interaction)
-        interaction.followUp(
-          `Task "${task}" implemented by pi. Creating PR...`,
-        );
-
-      try {
-        execSync("git add .", { cwd: config.workDir });
-        execSync(`git commit -m "Implement task: ${task}"`, {
-          cwd: config.workDir,
-        });
-        execSync(`git push origin ${branchName}`, { cwd: config.workDir });
-        const prUrl = execSync(
-          `gh pr create --title "Implement task: ${task}" --body "Automated PR from self-improving agent for task: ${task}"`,
-          {
-            encoding: "utf8",
-            cwd: config.workDir,
-          },
-        ).trim();
-        if (interaction) interaction.followUp(`PR created: ${prUrl}`);
-        markTaskDone(task);
-      } catch (err) {
-        const errorMsg = `Failed to commit/PR: ${err.message}`;
-        if (interaction) interaction.followUp(errorMsg);
-        log(errorMsg);
-      }
+      if (interaction) interaction.followUp(piOutput);
     } else {
-      const errorMsg = `pi failed with code ${code}`;
+      const errorMsg = `pi failed with code ${code}\n\n${piOutput}`;
       if (interaction) interaction.followUp(errorMsg);
       log(errorMsg);
     }
