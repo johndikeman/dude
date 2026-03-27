@@ -250,18 +250,10 @@ async function runCycle(interaction) {
 
   const apiKey = await getGeminiApiKey();
   if (!apiKey) {
-    const errorMsg =
-      "Could not obtain API key for Gemini. Make sure you are logged in via `gcloud auth login`.";
+    const errorMsg = "Could not obtain API key for Gemini.";
     if (interaction) interaction.followUp(errorMsg);
     log(errorMsg);
     return;
-  }
-
-  const branchName = `task-${Date.now()}`;
-  try {
-    execSync(`git checkout -b ${branchName}`, { cwd: config.workDir });
-  } catch (e) {
-    log(`Failed to create branch: ${e.message}`);
   }
 
   const prompt = `You are a self-improving AI agent. 
