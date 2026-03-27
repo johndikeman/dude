@@ -287,6 +287,10 @@ Context:
     prompt,
   ];
 
+  if (process.env.PI_SKILLS) {
+    piArgs.push("--skill", process.env.PI_SKILLS);
+  }
+
   log(`Executing: pi ${piArgs.join(" ")} in ${config.workDir}`);
 
   const piProcess = spawn("pi", piArgs, {

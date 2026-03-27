@@ -30,6 +30,16 @@
             dontNpmBuild = true;
           };
 
+          packages.skills = pkgs.stdenv.mkDerivation {
+            pname = "dude-skills";
+            version = "0.1.0";
+            src = ./.pi/skills;
+            installPhase = ''
+              mkdir -p $out/skills
+              cp -r * $out/skills/
+            '';
+          };
+
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
               nodejs_20
@@ -41,6 +51,8 @@
             ];
             shellHook = ''
               export PATH=$PWD/node_modules/.bin:$PATH
+              export PI_SKILLS=${self.packages.${system}.skills}/skills
+              export WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium
             '';
           };
         }
@@ -82,6 +94,8 @@
                 Restart = "always";
                 RestartSec = "5s";
                 Environment = [
+                  "PI_SKILLS=${self.packages.${pkgs.system}.skills}/skills"
+                  "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
                   "PATH=${
                     lib.makeBinPath [
                       pkgs.git
