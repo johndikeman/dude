@@ -28,6 +28,9 @@
             src = ./.;
             npmDepsHash = "sha256-9cXPCdfMYNe8rpcTwO6GTfXYxjCt8MkfDZqDsKKnJKQ=";
             dontNpmBuild = true;
+            postInstall = ''
+              cp .opvars $out/.opvars
+            '';
           };
 
           packages.skills = pkgs.stdenv.mkDerivation {
