@@ -266,7 +266,7 @@ async function runCycle(interaction) {
 
   const prompt = `You are a self-improving AI agent. 
 Current Task: ${task}
-
+Current date: ${Date.now().toLocaleString("en-US")}
 Your goal is to implement this task. your workspace is in (${config.workDir}).
 if the task is to improve yourself, this will be in the dude/ directory. if the directory does not exist, you can use the gh cli to clone johndikeman/dude.
 you can clone other repositories if needed.
@@ -275,6 +275,7 @@ Once you have implemented the task, please ensure you have tested the changes (e
 Then, commit the code to the feature branch and open a PR using gh cli.
 make sure your final message is a summary of the work that was done, or an explanation of the failure.
 
+if needed, previous sessions can be found in ~/.pi/agent/sessions/
 use lowercase writing and a semi-informal tone.
 
 Context:
