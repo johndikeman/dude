@@ -1,0 +1,6 @@
+- [x] setup op integration, get vault and SAK setup, ensure process can access the opvars + manual .env file
+- [x] setup git skill for pi agent, remove the clone command from index 
+- setup pi gemini-cli auth (slam the auth token from local into OP into the right file location on the host?)
+- test
+- how to get feedback from agent to discord? return last response? store sessions for other agents to look at (add skill also)
+- [x] skill for checking journalctl for service log output

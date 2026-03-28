@@ -258,13 +258,14 @@ async function runCycle(interaction) {
 
   const prompt = `You are a self-improving AI agent. 
 Current Task: ${task}
-Current date: ${Date.now().toLocaleString("en-US")}
+Current date: ${new Date().toLocaleString("en-US")}
 Your goal is to implement this task. your workspace is in (${config.workDir}).
 if the task is to improve yourself, this will be in the dude/ directory. if the directory does not exist, you can use the gh cli to clone johndikeman/dude.
 you can clone other repositories if needed.
 Create a feature branch to work on.
 Once you have implemented the task, please ensure you have tested the changes (e.g., via 'npm test' or running the code).
 Then, commit the code to the feature branch and open a PR using gh cli.
+When the task is complete, mark it as done in the task file (${TASKS_FILE}) by changing [ ] to [x].
 make sure your final message is a summary of the work that was done, or an explanation of the failure.
 
 if needed, previous sessions can be found in ~/.pi/agent/sessions/
@@ -291,20 +292,27 @@ Context:
   log(`Executing: pi ${piArgs.join(" ")} in ${config.workDir}`);
 
   const piProcess = spawn("pi", piArgs, {
-    stdio: "pipe",
+    stdio: ["inherit", "pipe", "pipe"],
     cwd: config.workDir,
   });
 
   let piOutput = "";
 
   piProcess.stdout.on("data", (data) => {
-    piOutput += data.toString();
+    const s = data.toString();
+    piOutput += s;
+    process.stdout.write(s);
+  });
+
+  piProcess.stderr.on("data", (data) => {
+    const s = data.toString();
+    process.stderr.write(s);
   });
 
   piProcess.on("close", (code) => {
     if (code === 0) {
       log("pi finished successfully.");
-      if (interaction) interaction.followUp(piOutput);
+      if (interaction) interaction.followUp(piOutput || "Task completed successfully (no output).");
     } else {
       const errorMsg = `pi failed with code ${code}\n\n${piOutput}`;
       if (interaction) interaction.followUp(errorMsg);
@@ -319,12 +327,6 @@ function getPendingTasks() {
   const matches = content.match(/- \[ \] (.*)/g);
   if (!matches) return [];
   return matches.map((m) => m.slice(6));
-}
-
-function markTaskDone(task) {
-  let content = fs.readFileSync(TASKS_FILE, "utf8");
-  content = content.replace(`- [ ] ${task}`, `- [x] ${task}`);
-  fs.writeFileSync(TASKS_FILE, content);
 }
 
 client.login(process.env.DISCORD_TOKEN);
