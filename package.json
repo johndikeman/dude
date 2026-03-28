@@ -8,7 +8,13 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node src/scheduler.test.js & node src/index.test.js",
+    "test:scheduler": "node src/scheduler.test.js",
+    "test:index": "node src/index.test.js"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./scheduler": "./src/scheduler.js"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.62.0",
