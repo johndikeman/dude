@@ -20,7 +20,8 @@ const TASKS_FILE = path.join(process.cwd(), "tasks.md");
 const CONFIG_FILE = path.join(process.cwd(), "config.json");
 const LOG_FILE = path.join(process.cwd(), "agent.log");
 const REPO_BRIEF_FILE = path.join(process.cwd(), "REPO_BRIEF.md");
-let MODEL_CODE = os.getenv(MODEL_CODE, "gemini-3-flash-preview");
+
+let MODEL_CODE = "gemini-3-flash-preview";
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -149,6 +150,7 @@ client.on("interactionCreate", async (interaction) => {
     const status = [
       `**Status Report**`,
       `Working Directory: \`${config.workDir}\``,
+      `Model: ${MODEL_CODE}`,
       `Pending Tasks: ${tasks.length}`,
       tasks.length > 0 ? `Next Task: ${tasks[0]}` : "",
     ]
