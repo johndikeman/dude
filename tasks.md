@@ -1,3 +1,7 @@
+# Pending Tasks
+- [x] look at the second most recent run of the agent from the 28th. finish  off the task. don't worry about running the nix flake update and home-manager commands, just write the commands in the deploy script.
+- [ ] take a detailed study of the repo and write an initial brief on it that can be provided in the agent prompts to orient them to the repo immediately
+- [ ] implement some detection and mitigation of Google quota errors. the goal would be to pause the task wait and resume once the quota is reset. look at the first and second session file from the 27th for an example of what the quota error looks like. this should also involve creating a more flexible system for scheduling runs or session resumes in the future
 - [x] setup op integration, get vault and SAK setup, ensure process can access the opvars + manual .env file
 - [x] setup git skill for pi agent, remove the clone command from index 
 - setup pi gemini-cli auth (slam the auth token from local into OP into the right file location on the host?)

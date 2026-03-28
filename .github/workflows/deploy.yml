@@ -1,0 +1,26 @@
+name: Deploy Agent
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            [ -f /nix/var/nix/profiles/default/etc/profile.d/nix.sh ] && . /nix/var/nix/profiles/default/etc/profile.d/nix.sh
+            export PATH=$PATH:/nix/var/nix/profiles/default/bin:~/.nix-profile/bin
+            cd ~/.config/home-manager
+            nix flake update dude
+            home-manager switch
+            git add flake.lock
+            git commit -m "chore: update dude flake.lock [skip ci]" || true
+            git push
