@@ -19,6 +19,7 @@ const client = new Client({
 const TASKS_FILE = path.join(process.cwd(), "tasks.md");
 const CONFIG_FILE = path.join(process.cwd(), "config.json");
 const LOG_FILE = path.join(process.cwd(), "agent.log");
+const REPO_BRIEF_FILE = path.join(process.cwd(), "REPO_BRIEF.md");
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -256,7 +257,14 @@ async function runCycle(interaction) {
     return;
   }
 
+  const repoBrief = fs.existsSync(REPO_BRIEF_FILE)
+    ? fs.readFileSync(REPO_BRIEF_FILE, "utf8")
+    : "";
+
   const prompt = `You are a self-improving AI agent. 
+
+${repoBrief ? `### Repository Brief:\n${repoBrief}\n` : ""}
+
 Current Task: ${task}
 Current date: ${new Date().toLocaleString("en-US")}
 Your goal is to implement this task. your workspace is in (${config.workDir}).
