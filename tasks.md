@@ -1,4 +1,5 @@
 # Pending Tasks
+- [x] please resolve the merge conflict between better-error-feedback and main and merge it to main & push once complete
 - [x] add better error feedback when pi exits. the error should be given as feedback to the interaction
 - [ ] add better error feedback when pi exits. the error should be given as feedback to the interaction
 - [ ] add better error feedback when pi exits. the error should be given as feedback to the interaction
