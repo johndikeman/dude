@@ -20,6 +20,7 @@ const TASKS_FILE = path.join(process.cwd(), "tasks.md");
 const CONFIG_FILE = path.join(process.cwd(), "config.json");
 const LOG_FILE = path.join(process.cwd(), "agent.log");
 const REPO_BRIEF_FILE = path.join(process.cwd(), "REPO_BRIEF.md");
+let MODEL_CODE = os.getenv(MODEL_CODE, "gemini-3-flash-preview");
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -92,6 +93,17 @@ const commands = [
     .setName("restart")
     .setDescription("Restart the agent process (via systemd)"),
   new SlashCommandBuilder().setName("help").setDescription("Show help message"),
+  new SlashCommandBuilder()
+    .setName("model code")
+    .setDescription("change the gemini model code")
+    .addStringOption((option) =>
+      option
+        .setName("code")
+        .setDescription(
+          "the model code, ie gemini-3-flash-preview, gemini-3-pro-preview, gemini-2.5-pro",
+        )
+        .setRequired(true),
+    ),
 ];
 
 client.once("ready", async () => {
@@ -156,6 +168,11 @@ client.on("interactionCreate", async (interaction) => {
     } else {
       await interaction.reply(`Directory does not exist: ${newDir}`);
     }
+  }
+
+  if (commandName === "model code") {
+    const newCode = options.getString("code");
+    MODEL_CODE = newCode;
   }
 
   if (commandName === "clone") {
@@ -289,7 +306,7 @@ Context:
     "--provider",
     "google-gemini-cli",
     "--model",
-    "gemini-3-flash-preview",
+    MODEL_CODE,
     "-p",
     prompt,
   ];
