@@ -85,7 +85,7 @@
           };
 
           config = lib.mkIf config.services.dude-agent.enable {
-            xdg.configFile.".pi/agent/models.json".text = ''
+            home.file.".pi/agent/models.json".text = ''
               			{
               				"providers": {
               					"verda": {
