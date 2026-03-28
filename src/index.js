@@ -263,7 +263,7 @@ Your goal is to implement this task. your workspace is in (${config.workDir}).
 if the task is to improve yourself, this will be in the dude/ directory. if the directory does not exist, you can use the gh cli to clone johndikeman/dude.
 you can clone other repositories if needed.
 Create a feature branch to work on.
-Once you have implemented the task, please ensure you have tested the changes (e.g., via 'npm test' or running the code).
+when appropriate, write testcases to test new code.
 Then, commit the code to the feature branch and open a PR using gh cli.
 When the task is complete, mark it as done in the task file (${TASKS_FILE}) by changing [ ] to [x].
 make sure your final message is a summary of the work that was done, or an explanation of the failure.
