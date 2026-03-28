@@ -85,6 +85,29 @@
           };
 
           config = lib.mkIf config.services.dude-agent.enable {
+            xdg.configFile.".pi/agent/models.json".text = ''
+              			{
+              				"providers": {
+              					"verda": {
+              						"baseUrl": "https://containers.datacrunch.io/verda-qwen35/v1",
+              						"api": "openai-completions",
+              						"apiKey": "!source ${config.services.dude-agent.workingDirectory}/.env && ${pkgs._1password-cli}/bin/op read 'op://AI/verda deployment API key/password'",
+              						"authHeader": true,
+              						"models": [
+              							{
+              								"id": "qwen3.5:122b",
+              								"name": "Qwen 3.5 122B (Verda)",
+              								"reasoning": true,
+              								"input": ["text", "image"],
+              								"contextWindow": 256000,
+              								"maxTokens": 32768
+              							}
+              						]
+              					}
+              				}
+              			}
+            '';
+
             systemd.user.services.dude-agent = {
               Unit = {
                 Description = "Dude Self-Improving AI Agent";
@@ -116,28 +139,6 @@
               Install.WantedBy = [ "default.target" ];
             };
           };
-          xdg.configFile.".pi/agent/models.json".text = ''
-            						{
-            							"providers": {
-            								"verda": {
-            									"baseUrl": "https://containers.datacrunch.io/verda-qwen35/v1",
-            									"api": "openai-completions",
-            									"apiKey": "!source ${config.services.dude-agent.workingDirectory}/.env && ${pkgs._1password-cli}/bin/op read 'op://AI/verda deployment API key/password'",
-            									"authHeader": true,
-            									"models": [
-            										{
-            											"id": "qwen3.5:122b",
-            											"name": "Qwen 3.5 122B (Verda)",
-            											"reasoning": true,
-            											"input": ["text", "image"],
-            											"contextWindow": 256000,
-            											"maxTokens": 32768
-            										}
-            									]
-            								}
-            							}
-            						}
-          '';
         };
     };
 }
