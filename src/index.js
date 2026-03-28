@@ -23,6 +23,9 @@ const LOG_FILE = path.join(process.cwd(), "agent.log");
 const REPO_BRIEF_FILE = path.join(process.cwd(), "REPO_BRIEF.md");
 const SCHEDULER = require("./scheduler");
 
+let MODEL_CODE = "gemini-3-flash-preview";
+let MODEL_PROVIDER = "google-gemini-cli";
+
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
@@ -141,6 +144,17 @@ const commands = [
         .setRequired(false),
     ),
   new SlashCommandBuilder().setName("help").setDescription("Show help message"),
+  new SlashCommandBuilder()
+    .setName("modelcode")
+    .setDescription("change the gemini model code")
+    .addStringOption((option) =>
+      option
+        .setName("code")
+        .setDescription(
+          "the model code, ie gemini-3-flash-preview, gemini-3-pro-preview, qwen3.5:122b, gemini-2.5-pro",
+        )
+        .setRequired(true),
+    ),
 ];
 
 client.once("ready", async () => {
@@ -175,7 +189,9 @@ async function checkAndRunScheduledTasks() {
     for (const task of ready.paused) {
       log(`Resuming paused task: ${task.task}`);
       // Remove from paused and add back to tasks.md
-      ready.schedule.paused = ready.schedule.paused.filter((t) => t.id !== task.id);
+      ready.schedule.paused = ready.schedule.paused.filter(
+        (t) => t.id !== task.id,
+      );
       SCHEDULER.saveSchedule(ready.schedule);
       // Add task back to queue
       addTask(task.task);
@@ -222,6 +238,7 @@ client.on("interactionCreate", async (interaction) => {
     const status = [
       `**Status Report**`,
       `Working Directory: \`${config.workDir}\``,
+      `Model: ${MODEL_CODE}`,
       `Pending Tasks: ${tasks.length}`,
       tasks.length > 0 ? `Next Task: ${tasks[0]}` : "",
     ]
@@ -241,6 +258,17 @@ client.on("interactionCreate", async (interaction) => {
     } else {
       await interaction.reply(`Directory does not exist: ${newDir}`);
     }
+  }
+
+  if (commandName === "modelcode") {
+    const newCode = options.getString("code");
+    if (newCode === "qwen3.5:122b") {
+      MODEL_PROVIDER = "verda";
+    } else {
+      MODEL_PROVIDER = "google-gemini-cli";
+    }
+    MODEL_CODE = newCode;
+    await interaction.reply(`model updated to ${MODEL_CODE}`);
   }
 
   if (commandName === "clone") {
@@ -301,9 +329,7 @@ client.on("interactionCreate", async (interaction) => {
       );
     } catch (err) {
       log(`Error scheduling task: ${err.message}`);
-      await interaction.editReply(
-        `Failed to schedule task: ${err.message}`,
-      );
+      await interaction.editReply(`Failed to schedule task: ${err.message}`);
     }
   }
 
@@ -379,9 +405,7 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.editReply(`No task found with ID: ${taskId}`);
         return;
       }
-      await interaction.editReply(
-        `Task cancelled!\n**Task:** ${removed.task}`,
-      );
+      await interaction.editReply(`Task cancelled!\n**Task:** ${removed.task}`);
     } catch (err) {
       log(`Error cancelling task: ${err.message}`);
       await interaction.editReply(`Failed to cancel task: ${err.message}`);
@@ -433,7 +457,12 @@ function parseScheduleTime(timeStr) {
   if (timeMatch) {
     const [, hour, minute, second] = timeMatch;
     const date = new Date();
-    date.setHours(parseInt(hour, 10), parseInt(minute, 10), second ? parseInt(second, 10) : 0, 0);
+    date.setHours(
+      parseInt(hour, 10),
+      parseInt(minute, 10),
+      second ? parseInt(second, 10) : 0,
+      0,
+    );
     if (date.getTime() <= now) {
       date.setDate(date.getDate() + 1); // Schedule for tomorrow if time has passed
     }
@@ -522,9 +551,9 @@ Current date: ${new Date().toLocaleString("en-US")}
 Your goal is to implement this task. your workspace is in (${config.workDir}).
 if the task is to improve yourself, this will be in the dude/ directory. if the directory does not exist, you can use the gh cli to clone johndikeman/dude.
 you can clone other repositories if needed.
-Create a feature branch to work on.
+Create a feature branch to work on, pull in the most recent 'main' branch in case another user has made changes.
+when appropriate, write testcases to test new code.
 When you are working on a task, you can report your status by printing a line starting with [STATUS] followed by your current activity. This status will be displayed in Discord.
-Once you have implemented the task, please ensure you have tested the changes (e.g., via 'npm test' or running the code).
 Then, commit the code to the feature branch and open a PR using gh cli.
 When the task is complete, mark it as done in the task file (${TASKS_FILE}) by changing [ ] to [x].
 make sure your final message is a summary of the work that was done, or an explanation of the failure.
@@ -539,9 +568,9 @@ Context:
 
   const piArgs = [
     "--provider",
-    "google-gemini-cli",
+    MODEL_PROVIDER,
     "--model",
-    "gemini-3-flash-preview",
+    MODEL_CODE,
     "-p",
     prompt,
   ];
