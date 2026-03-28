@@ -95,7 +95,7 @@ const commands = [
     .setDescription("Restart the agent process (via systemd)"),
   new SlashCommandBuilder().setName("help").setDescription("Show help message"),
   new SlashCommandBuilder()
-    .setName("model code")
+    .setName("modelcode")
     .setDescription("change the gemini model code")
     .addStringOption((option) =>
       option
@@ -172,7 +172,7 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
-  if (commandName === "model code") {
+  if (commandName === "modelcode") {
     const newCode = options.getString("code");
     MODEL_CODE = newCode;
   }
