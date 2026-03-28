@@ -267,6 +267,7 @@ client.on("interactionCreate", async (interaction) => {
       MODEL_PROVIDER = "google-gemini-cli";
     }
     MODEL_CODE = newCode;
+    await interaction.reply(`model updated to ${MODEL_CODE}`);
   }
 
   if (commandName === "clone") {
