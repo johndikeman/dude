@@ -26,7 +26,7 @@
             pname = "dude-agent";
             version = "0.1.0";
             src = ./.;
-            npmDepsHash = "sha256-9cXPCdfMYNe8rpcTwO6GTfXYxjCt8MkfDZqDsKKnJKQ=";
+            npmDepsHash = "sha256-hNPIZ5xR11N+tPOxFQQpas2INuKPzXiLEg8HSZ7cRbU=";
             dontNpmBuild = true;
             postInstall = ''
               cp .opvars $out/.opvars
