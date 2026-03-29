@@ -31,9 +31,12 @@ function parseTimeString(timeStr) {
 // Parse quota error message and extract reset time
 function parseQuotaError(errorMessage) {
   // Pattern: "Cloud Code Assist API error (429): You have exhausted your capacity on this model. Your quota will reset after 3h50m3s."
-  const match = errorMessage.match(/quota will reset after ([0-9]+h)?([0-9]+m)?([0-9]+s)?/i);
-  if (match) {
-    const timeStr = match[0].replace("quota will reset after ", "");
+  // Also handles cases where no time is specified
+  const timeMatch = errorMessage.match(/quota will reset after ([0-9]+h)?([0-9]+m)?([0-9]+s)?/i);
+  const quotaExhaustedMatch = errorMessage.match(/you have exhausted your capacity|quota exhausted|rate limit exceeded/i);
+
+  if (timeMatch) {
+    const timeStr = timeMatch[0].replace("quota will reset after ", "");
     const ms = parseTimeString(timeStr);
     return {
       type: "quota_exhausted",
@@ -41,15 +44,42 @@ function parseQuotaError(errorMessage) {
       errorMessage,
     };
   }
+
+  // If we found a quota exhaustion error but no time is specified, use a default
+  if (quotaExhaustedMatch) {
+    // Default to 1 hour (3600000 ms) when no reset time is specified
+    return {
+      type: "quota_exhausted",
+      resetAfterMs: 3600000, // 1 hour default
+      errorMessage,
+    };
+  }
+
   return null;
 }
 
 // Check if an error message is a quota error
 function isQuotaError(output) {
-  return (
-    output.includes("429") &&
-    (output.includes("exhausted your capacity") || output.includes("quota"))
+  // Must have 429 status code and be an actual error message
+  // This is more specific to avoid false positives from text about quota handling
+  const has429 = output.includes("429");
+  const hasCapacityError = output.includes("exhausted your capacity");
+  const hasQuotaReset = output.includes("quota will reset") || output.includes("Quota exhausted");
+  const hasRateLimit = output.includes("rate limit exceeded");
+  
+  // Check if it's likely an actual error (has 429 AND one of the error messages)
+  if (has429 && (hasCapacityError || hasQuotaReset || hasRateLimit)) {
+    return true;
+  }
+  
+  // Also match common quota error patterns without 429 (some APIs return different codes)
+  const hasClearQuotaError = (
+    (hasCapacityError || hasQuotaReset) && 
+    output.includes("error") && 
+    output.includes("capacity")
   );
+  
+  return hasClearQuotaError;
 }
 
 // Load scheduled tasks from file
@@ -143,8 +173,17 @@ function listPausedTasks() {
       pausedAt: new Date(t.pausedAt).toLocaleString(),
       resumeAt: new Date(t.resumeAt).toLocaleString(),
       timeRemaining,
+      errorMessage: t.errorInfo?.errorMessage || "Unknown error",
+      errorType: t.errorInfo?.type || "unknown",
     };
   });
+}
+
+// Get error information for a specific paused task
+function getPausedTaskError(taskId) {
+  const schedule = loadSchedule();
+  const task = schedule.paused.find((t) => t.id === taskId);
+  return task?.errorInfo || null;
 }
 
 // Get list of scheduled tasks
@@ -203,4 +242,5 @@ module.exports = {
   listScheduledTasks,
   cancelPausedTask,
   cancelScheduledTask,
+  getPausedTaskError,
 };

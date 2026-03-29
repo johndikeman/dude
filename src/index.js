@@ -641,7 +641,11 @@ Context:
       try {
         const event = JSON.parse(trimmed);
         // Look for message events with content
-        if (event.type === "message" && event.message && event.message.content) {
+        if (
+          event.type === "message" &&
+          event.message &&
+          event.message.content
+        ) {
           for (const content of event.message.content) {
             // Check for text content with [STATUS]
             if (content.type === "text" && content.text) {
@@ -652,6 +656,26 @@ Context:
                 updateDiscordStatus();
               }
             }
+          }
+        }
+        // Check for quota errors in stdout
+        if (SCHEDULER.isQuotaError(line)) {
+          const errorInfo = SCHEDULER.parseQuotaError(line);
+          if (errorInfo) {
+            log(`Quota error detected: ${errorInfo.errorMessage}`);
+            const hasTime =
+              errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
+            const waitInfo = hasTime
+              ? `until ${formatDuration(errorInfo.resetAfterMs)}`
+              : "until quota resets (estimated 1 hour)";
+            currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
+            // Pause the task
+            const paused = SCHEDULER.pauseTask(task, errorInfo);
+            pausedTaskId = paused.id;
+
+            // Schedule task as a scheduled task for after quota reset
+            SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
+            updateDiscordStatus(true);
           }
         }
 
@@ -713,9 +737,11 @@ Context:
       const errorInfo = SCHEDULER.parseQuotaError(s);
       if (errorInfo) {
         log(`Quota error detected in stderr: ${errorInfo.errorMessage}`);
-        currentStatus = `Quota exhausted. Pausing task until ${formatDuration(
-          errorInfo.resetAfterMs,
-        )}.`;
+        const hasTime = errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
+        const waitInfo = hasTime
+          ? `until ${formatDuration(errorInfo.resetAfterMs)}`
+          : "until quota resets (estimated 1 hour)";
+        currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
         updateDiscordStatus(true);
 
         // Pause the task
@@ -752,11 +778,11 @@ Context:
     } else if (code !== 0 && isQuotaPause && pausedTaskId) {
       // Task was paused due to quota, already scheduled for resume
       log(`Task ${task} was paused due to quota, scheduled for resume.`);
-      currentStatus = `Paused (quota). Resumes in ${formatDuration(
+      const resumeTime =
         schedule.scheduled.find(
           (t) => t.task === task && t.reason === "quota_resume",
-        )?.runAt - Date.now() || 0,
-      )}.`;
+        )?.runAt - Date.now() || 0;
+      currentStatus = `Paused (quota). Resumes in ${formatDuration(resumeTime)}.`;
       await updateDiscordStatus(true);
       if (interaction) {
         const cleanedOutput = stripAnsi(piOutput.trim());
@@ -766,6 +792,14 @@ Context:
             : cleanedOutput;
 
         let response = `Task ${task} was paused due to Google API quota exhaustion. Will resume automatically when quota resets.`;
+
+        // Include the actual error message that was detected
+        const pausedTask = schedule.paused.find((t) => t.id === pausedTaskId);
+        if (pausedTask?.errorInfo?.errorMessage) {
+          const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 500);
+          response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 500 ? "..." : ""}\n\`\`\``;
+        }
+
         if (truncatedOutput) {
           response += `\n\n**Output so far:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
         }
