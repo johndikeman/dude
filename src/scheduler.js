@@ -1,8 +1,9 @@
 const fs = require("fs");
 const path = require("path");
 
-const SCHEDULE_FILE = path.join(process.cwd(), "schedule.json");
-const LOG_FILE = path.join(process.cwd(), "agent.log");
+const CONFIG_DIR = process.env.DUDE_CONFIG_DIR || process.cwd();
+const SCHEDULE_FILE = path.join(CONFIG_DIR, "schedule.json");
+const LOG_FILE = path.join(CONFIG_DIR, "agent.log");
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;

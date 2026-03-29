@@ -80,7 +80,11 @@
             };
             workingDirectory = lib.mkOption {
               type = lib.types.str;
-              default = "/home/john/dude";
+              default = "${config.home.homeDirectory}/dude";
+            };
+            configDirectory = lib.mkOption {
+              type = lib.types.str;
+              default = "${config.home.homeDirectory}/.config/dude";
             };
           };
 
@@ -93,11 +97,15 @@
               Service = {
                 Type = "simple";
                 WorkingDirectory = config.services.dude-agent.workingDirectory;
-                ExecStartPre = "${pkgs._1password-cli}/bin/op run --env-file ${config.services.dude-agent.package}/.opvars -- /usr/bin/bash -c \"[ -z \"$GEMINI_JSON_TOKEN\" ] || echo \"$GEMINI_JSON_TOKEN\" > ~/.pi/agent/auth.json\"";
+                ExecStartPre = [
+                  "${pkgs.coreutils}/bin/mkdir -p ${config.services.dude-agent.configDirectory}"
+                  "${pkgs._1password-cli}/bin/op run --env-file ${config.services.dude-agent.package}/.opvars -- /usr/bin/bash -c \"[ -z \"$GEMINI_JSON_TOKEN\" ] || echo \"$GEMINI_JSON_TOKEN\" > ~/.pi/agent/auth.json\""
+                ];
                 ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${config.services.dude-agent.package}/.opvars -- ${config.services.dude-agent.package}/bin/dude-agent";
                 Restart = "always";
                 RestartSec = "5s";
                 Environment = [
+                  "DUDE_CONFIG_DIR=${config.services.dude-agent.configDirectory}"
                   "PI_SKILLS=${self.packages.${pkgs.system}.skills}/skills"
                   "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
                   "PATH=${
@@ -108,10 +116,14 @@
                       pkgs.nodejs_20
                       pkgs._1password-cli
                       pkgs.chromium
+                      pkgs.coreutils
                     ]
                   }:${config.services.dude-agent.package}/lib/node_modules/dude-agent/node_modules/.bin:/usr/bin:/bin"
                 ];
-                EnvironmentFile = "-${config.services.dude-agent.workingDirectory}/.env";
+                EnvironmentFile = [
+                  "-${config.services.dude-agent.workingDirectory}/.env"
+                  "-${config.services.dude-agent.configDirectory}/.env"
+                ];
               };
               Install.WantedBy = [ "default.target" ];
             };

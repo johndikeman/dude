@@ -17,9 +17,12 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
 });
 
-const TASKS_FILE = path.join(process.cwd(), "tasks.md");
-const CONFIG_FILE = path.join(process.cwd(), "config.json");
-const LOG_FILE = path.join(process.cwd(), "agent.log");
+const CONFIG_DIR = process.env.DUDE_CONFIG_DIR || process.cwd();
+require("dotenv").config({ path: path.join(CONFIG_DIR, ".env") });
+
+const TASKS_FILE = path.join(CONFIG_DIR, "tasks.md");
+const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
+const LOG_FILE = path.join(CONFIG_DIR, "agent.log");
 const REPO_BRIEF_FILE = path.join(process.cwd(), "REPO_BRIEF.md");
 const SCHEDULER = require("./scheduler");
 
