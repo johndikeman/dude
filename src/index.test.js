@@ -1,5 +1,42 @@
 // Test for index.js helper functions
 
+const fs = require("fs");
+const path = require("path");
+
+const TEST_TASKS = path.join(__dirname, "..", "test_tasks.md");
+
+// Test tasks file content
+const TEST_TASKS_CONTENT = `# Pending Tasks
+- [ ] task one
+- [ ] task two
+- [ ] task three
+`;
+
+// Simple implementation of removeTaskFromPending for testing
+function removeTaskFromPending(task) {
+  if (!fs.existsSync(TEST_TASKS)) return false;
+  let content = fs.readFileSync(TEST_TASKS, "utf8");
+  const originalContent = content;
+  
+  // Remove the specific task from pending tasks
+  content = content.replace(new RegExp(`- \\[ \\] ${task.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\n?`, "s"), "");
+  
+  // Clean up empty lines and restore the header if needed
+  content = content.replace("# Pending Tasks\n\n", "# Pending Tasks\n");
+  
+  if (content !== originalContent) {
+    fs.writeFileSync(TEST_TASKS, content);
+    return true;
+  }
+  return false;
+}
+
+function cleanupTasks() {
+  if (fs.existsSync(TEST_TASKS)) {
+    fs.unlinkSync(TEST_TASKS);
+  }
+}
+
 function parseScheduleTime(timeStr) {
   const now = Date.now();
 
@@ -134,6 +171,47 @@ test("formats 25h as '1d 1h'", () => {
 });
 test("formats 38h5m as '1d 14h'", () => {
   assert(formatDuration(138300000) === "1d 14h");
+});
+
+// removeTaskFromPending tests
+console.log("\n=== removeTaskFromPending Tests ===");
+test("removes a task from pending list", () => {
+  cleanupTasks();
+  fs.writeFileSync(TEST_TASKS, TEST_TASKS_CONTENT);
+  const result = removeTaskFromPending("task two");
+  assert(result === true);
+  const content = fs.readFileSync(TEST_TASKS, "utf8");
+  assert(content.includes("task one"));
+  assert(content.includes("task three"));
+  assert(!content.includes("task two"));
+  cleanupTasks();
+});
+test("returns false for non-existent task", () => {
+  cleanupTasks();
+  fs.writeFileSync(TEST_TASKS, TEST_TASKS_CONTENT);
+  const result = removeTaskFromPending("nonexistent task");
+  assert(result === false);
+  cleanupTasks();
+});
+test("handles empty tasks file", () => {
+  cleanupTasks();
+  const result = removeTaskFromPending("any task");
+  assert(result === false);
+  cleanupTasks();
+});
+test("handles task with special characters", () => {
+  cleanupTasks();
+  const specialContent = `# Pending Tasks
+- [ ] task with "quotes"
+- [ ] normal task
+`;
+  fs.writeFileSync(TEST_TASKS, specialContent);
+  const result = removeTaskFromPending('task with "quotes"');
+  assert(result === true);
+  const content = fs.readFileSync(TEST_TASKS, "utf8");
+  assert(content.includes("normal task"));
+  assert(!content.includes('task with "quotes"'));
+  cleanupTasks();
 });
 
 console.log(`\n=== Results ===`);
