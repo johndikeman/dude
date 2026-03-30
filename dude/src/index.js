@@ -231,8 +231,14 @@ client.on("interactionCreate", async (interaction) => {
     if (tasks.length === 0) {
       await interaction.reply("No pending tasks.");
     } else {
-      const list = tasks.map((t, i) => `${i + 1}. ${t}`).join("\n");
-      await interaction.reply(`**Pending Tasks:**\n${list}`);
+      let list = tasks.map((t, i) => `${i + 1}. ${t}`).join("\n");
+      let response = `**Pending Tasks:**\n${list}`;
+      
+      if (response.length > 2000) {
+        response = response.slice(0, 1990) + "... (truncated)";
+      }
+      
+      await interaction.reply(response);
     }
   }
 
@@ -848,7 +854,8 @@ function getPendingTasks() {
   const content = fs.readFileSync(TASKS_FILE, "utf8");
   const matches = content.match(/- \[ \] (.*)/g);
   if (!matches) return [];
-  return matches.map((m) => m.slice(6));
+  const tasks = matches.map((m) => m.slice(6).trim());
+  return [...new Set(tasks)];
 }
 
 client.login(process.env.DISCORD_TOKEN);
