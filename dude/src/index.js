@@ -39,7 +39,10 @@ function log(msg) {
 
 let config = {
   workDir: process.cwd(),
+  autoNext: false,
 };
+
+let isRunning = false;
 
 if (fs.existsSync(CONFIG_FILE)) {
   config = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
@@ -146,6 +149,19 @@ const commands = [
         .setDescription("Type of task to cancel (paused or scheduled)")
         .setRequired(false),
     ),
+  new SlashCommandBuilder()
+    .setName("autonext")
+    .setDescription("Toggle automatic processing of the next task in the queue")
+    .addStringOption((option) =>
+      option
+        .setName("mode")
+        .setDescription("Set auto-next mode")
+        .setRequired(true)
+        .addChoices(
+          { name: "on", value: "on" },
+          { name: "off", value: "off" },
+        ),
+    ),
   new SlashCommandBuilder().setName("help").setDescription("Show help message"),
   new SlashCommandBuilder()
     .setName("modelcode")
@@ -181,6 +197,15 @@ client.once("ready", async () => {
 
   // Initial check for scheduled tasks on startup
   await checkAndRunScheduledTasks();
+
+  // If autoNext is enabled, start working on startup
+  if (config.autoNext && !isRunning) {
+    const tasks = getPendingTasks();
+    if (tasks.length > 0) {
+      log("autoNext is enabled, starting cycle on startup...");
+      runCycle();
+    }
+  }
 });
 
 // Check and run scheduled tasks
@@ -213,6 +238,16 @@ async function checkAndRunScheduledTasks() {
       addTask(task.task);
     }
   }
+
+  // If autoNext is enabled, start working if not already running
+  if (
+    config.autoNext &&
+    !isRunning &&
+    (ready.paused.length > 0 || ready.scheduled.length > 0)
+  ) {
+    log("autoNext is enabled, starting cycle after resume/schedule...");
+    runCycle();
+  }
 }
 
 client.on("interactionCreate", async (interaction) => {
@@ -224,6 +259,12 @@ client.on("interactionCreate", async (interaction) => {
     const task = options.getString("description");
     addTask(task);
     await interaction.reply(`Task added: ${task}`);
+
+    // If autoNext is enabled, start working if not already running
+    if (config.autoNext && !isRunning) {
+      log("autoNext is enabled, starting cycle after task addition...");
+      runCycle();
+    }
   }
 
   if (commandName === "tasks") {
@@ -248,6 +289,7 @@ client.on("interactionCreate", async (interaction) => {
       `**Status Report**`,
       `Working Directory: \`${config.workDir}\``,
       `Model: ${MODEL_CODE}`,
+      `Auto-Next: ${config.autoNext ? "**ON**" : "OFF"}`,
       `Pending Tasks: ${tasks.length}`,
       tasks.length > 0 ? `Next Task: ${tasks[0]}` : "",
     ]
@@ -278,6 +320,15 @@ client.on("interactionCreate", async (interaction) => {
     }
     MODEL_CODE = newCode;
     await interaction.reply(`model updated to ${MODEL_CODE}`);
+  }
+
+  if (commandName === "autonext") {
+    const mode = options.getString("mode");
+    config.autoNext = mode === "on";
+    saveConfig();
+    await interaction.reply(
+      `Automatic processing of next task is now **${config.autoNext ? "ON" : "OFF"}**`,
+    );
   }
 
   if (commandName === "clone") {
@@ -529,15 +580,24 @@ async function getGeminiApiKey() {
 }
 
 async function runCycle(interaction) {
+  if (isRunning) {
+    if (interaction) interaction.followUp("A task is already being processed.");
+    return;
+  }
+  
   const tasks = getPendingTasks();
   if (tasks.length === 0) {
     if (interaction) interaction.followUp("No pending tasks.");
     return;
   }
 
+  isRunning = true;
   const task = tasks[0];
   if (interaction) interaction.followUp(`Working on task: ${task}`);
   log(`Working on task: ${task}`);
+  
+  // ... rest of the function ...
+
 
   const apiKey = await getGeminiApiKey();
   if (!apiKey) {
@@ -597,6 +657,7 @@ Context:
   });
 
   piProcess.on("error", async (err) => {
+    isRunning = false;
     log(`Failed to start pi process: ${err.message}`);
     currentStatus = `Failed to start.`;
     await updateDiscordStatus(true);
@@ -784,6 +845,7 @@ Context:
   });
 
   piProcess.on("close", async (code) => {
+    isRunning = false;
     // Check if this was a quota pause
     const schedule = SCHEDULER.loadSchedule();
     const isQuotaPause = schedule.scheduled.some(
@@ -803,6 +865,15 @@ Context:
         interaction.followUp(
           truncatedOutput || "Task completed successfully (no output).",
         );
+      }
+
+      // If autoNext is enabled, start the next task
+      if (config.autoNext) {
+        log("autoNext is enabled, starting next task...");
+        // Use a short delay to allow file system to settle (especially for tasks.md)
+        setTimeout(() => {
+          runCycle();
+        }, 5000);
       }
     } else if (code !== 0 && isQuotaPause && pausedTaskId) {
       // Task was paused due to quota, already scheduled for resume
