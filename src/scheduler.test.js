@@ -114,6 +114,35 @@ function createMockScheduler() {
       }
       return null;
     },
+    suspendSession: (sessionId, reason = "awaiting feedback") => {
+      const schedule = createMockScheduler().loadSchedule();
+      schedule.suspendedSessions = schedule.suspendedSessions || [];
+      const suspendedSession = {
+        id: "test-suspended-id",
+        sessionId,
+        suspendedAt: Date.now(),
+        reason,
+      };
+      schedule.suspendedSessions.push(suspendedSession);
+      createMockScheduler().saveSchedule(schedule);
+      return suspendedSession;
+    },
+    resumeSuspendedSession: (sessionId) => {
+      const schedule = createMockScheduler().loadSchedule();
+      const index = (schedule.suspendedSessions || []).findIndex(
+        (s) => s.sessionId === sessionId
+      );
+      if (index !== -1) {
+        const removed = schedule.suspendedSessions.splice(index, 1)[0];
+        createMockScheduler().saveSchedule(schedule);
+        return removed;
+      }
+      return null;
+    },
+    getReadySuspendedSessions: () => {
+      const schedule = createMockScheduler().loadSchedule();
+      return schedule.suspendedSessions || [];
+    },
   };
 }
 
@@ -257,6 +286,42 @@ function runTests() {
     const removed = scheduler.cancelScheduledTask(scheduled.id);
     assert(removed.task === "test");
     assert(scheduler.listScheduledTasks().length === 0);
+    cleanup();
+  });
+
+  // Session suspension tests
+  console.log("\n=== Session Suspension Tests ===");
+  test("suspends a session", () => {
+    cleanup();
+    const suspended = scheduler.suspendSession("session-123", "awaiting feedback");
+    assert(suspended.sessionId === "session-123");
+    assert(suspended.reason === "awaiting feedback");
+    cleanup();
+  });
+
+  test("resumes a suspended session", () => {
+    cleanup();
+    const suspended = scheduler.suspendSession("session-456", "awaiting feedback");
+    const resumed = scheduler.resumeSuspendedSession("session-456");
+    assert(resumed !== null);
+    assert(resumed.sessionId === "session-456");
+    assert(scheduler.getReadySuspendedSessions().length === 0);
+    cleanup();
+  });
+
+  test("returns null for non-existent session resume", () => {
+    cleanup();
+    const resumed = scheduler.resumeSuspendedSession("nonexistent");
+    assert(resumed === null);
+    cleanup();
+  });
+
+  test("lists ready suspended sessions", () => {
+    cleanup();
+    scheduler.suspendSession("session-789", "awaiting feedback");
+    const ready = scheduler.getReadySuspendedSessions();
+    assert(ready.length === 1);
+    assert(ready[0].sessionId === "session-789");
     cleanup();
   });
 

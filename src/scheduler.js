@@ -228,6 +228,43 @@ function cancelScheduledTask(taskId) {
   return null;
 }
 
+// Suspend a session for later resumption with feedback
+function suspendSession(sessionId, reason = "awaiting feedback") {
+  const schedule = loadSchedule();
+
+  const suspendedSession = {
+    id: Date.now().toString(),
+    sessionId,
+    suspendedAt: Date.now(),
+    reason,
+  };
+
+  schedule.suspendedSessions = schedule.suspendedSessions || [];
+  schedule.suspendedSessions.push(suspendedSession);
+  saveSchedule(schedule);
+  return suspendedSession;
+}
+
+// Resume a suspended session
+function resumeSuspendedSession(sessionId) {
+  const schedule = loadSchedule();
+  const index = (schedule.suspendedSessions || []).findIndex(
+    (s) => s.sessionId === sessionId,
+  );
+  if (index !== -1) {
+    const removed = schedule.suspendedSessions.splice(index, 1)[0];
+    saveSchedule(schedule);
+    return removed;
+  }
+  return null;
+}
+
+// Check for suspended sessions that are ready
+function getReadySuspendedSessions() {
+  const schedule = loadSchedule();
+  return schedule.suspendedSessions || [];
+}
+
 module.exports = {
   parseTimeString,
   parseQuotaError,
@@ -243,4 +280,7 @@ module.exports = {
   cancelPausedTask,
   cancelScheduledTask,
   getPausedTaskError,
+  suspendSession,
+  resumeSuspendedSession,
+  getReadySuspendedSessions,
 };

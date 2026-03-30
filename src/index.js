@@ -8,13 +8,19 @@ const {
   Routes,
   SlashCommandBuilder,
 } = require("discord.js");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const { execSync, spawn } = require("child_process");
 const stripAnsi = require("strip-ansi");
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+  partials: [Partials.Message],
 });
 
 const CONFIG_DIR = process.env.DUDE_CONFIG_DIR || process.cwd();
@@ -25,6 +31,7 @@ const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 const LOG_FILE = path.join(CONFIG_DIR, "agent.log");
 const REPO_BRIEF_FILE = path.join(process.cwd(), "REPO_BRIEF.md");
 const SCHEDULER = require("./scheduler");
+const SESSIONS = require("./sessions");
 
 let MODEL_CODE = "gemini-3-flash-preview";
 let MODEL_PROVIDER = "google-gemini-cli";
@@ -178,6 +185,23 @@ const commands = [
           { name: "gemini-2.5-pro", value: "gemini-2.5-pro" },
         ),
     ),
+  new SlashCommandBuilder()
+    .setName("sessions")
+    .setDescription("List active sessions that can be resumed via reply"),
+  new SlashCommandBuilder()
+    .setName("linkpr")
+    .setDescription("Link the current session to a GitHub PR for resume via comment")
+    .addStringOption((option) =>
+      option
+        .setName("number")
+        .setDescription("The PR number")
+        .setRequired(true),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("repo")
+        .setDescription("The repository (owner/name, defaults to GITHUB_REPO env var)"),
+    ),
 ];
 
 client.once("ready", async () => {
@@ -198,6 +222,21 @@ client.once("ready", async () => {
 
   // Check for ready scheduled tasks periodically (every 5 minutes)
   setInterval(checkAndRunScheduledTasks, 5 * 60 * 1000);
+
+  // Check GitHub PR comments for resume requests (every 5 minutes)
+  if (process.env.GITHUB_TOKEN) {
+    setInterval(checkGitHubPRComments, 5 * 60 * 1000);
+    log("GitHub PR comment checking enabled");
+  }
+
+  // Archive old sessions periodically (every hour)
+  setInterval(() => {
+    try {
+      SESSIONS.archiveCompletedSessions();
+    } catch (e) {
+      log(`Failed to archive sessions: ${e.message}`);
+    }
+  }, 60 * 60 * 1000);
 
   // Initial check for scheduled tasks on startup
   await checkAndRunScheduledTasks();
@@ -476,6 +515,49 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
+  if (commandName === "sessions") {
+    const activeSessions = SESSIONS.getActiveSessions();
+    if (activeSessions.length === 0) {
+      await interaction.reply("No active sessions. Run a task with `/start` to create one.");
+    } else {
+      const list = activeSessions
+        .map(
+          (s) =>
+            `[ID: ${s.id}] ${s.task.substring(0, 50)}${s.task.length > 50 ? "..." : ""}\n  Created: ${s.createdAt}${s.discordMessageId ? "\n  Reply to my Discord message to resume" : ""}${s.prNumber ? `\n  Linked to PR #${s.prNumber} (comment /resume to resume)` : ""}`,
+        )
+        .join("\n\n");
+      let response = `**Active Sessions:**\n\n${list}`;
+      if (response.length > 2000) {
+        response = response.slice(0, 1990) + "... (truncated)";
+      }
+      await interaction.reply(response);
+    }
+  }
+
+  if (commandName === "linkpr") {
+    const prNumber = options.getString("number");
+    const repo = options.getString("repo") || process.env.GITHUB_REPO || "";
+
+    await interaction.deferReply();
+    try {
+      const session = SESSIONS.getActiveSessions()[0];
+      if (!session) {
+        await interaction.editReply(
+          "No active session to link. Start a task with `/start` first.",
+        );
+        return;
+      }
+
+      SESSIONS.linkPR(session.id, parseInt(prNumber), repo);
+      await interaction.editReply(
+        `Linked PR #${prNumber} in ${repo} to session ${session.id}. Comments on this PR will be checked for resume requests.`,
+      );
+    } catch (err) {
+      log(`Error linking PR: ${err.message}`);
+      await interaction.editReply(`Failed to link PR: ${err.message}`);
+    }
+  }
+
   if (commandName === "help") {
     await interaction.reply(
       [
@@ -490,12 +572,128 @@ client.on("interactionCreate", async (interaction) => {
         `/scheduled - List scheduled tasks`,
         `/resume <id> - Resume a paused task`,
         `/cancel <id> [type] - Cancel a task`,
+        `/sessions - List active sessions`,
         `/restart - Restart the agent`,
         `/help - Show this message`,
       ].join("\n"),
     );
   }
 });
+
+// Handle Discord message replies for session resumption
+client.on("messageCreate", async (message) => {
+  // Ignore bot messages
+  if (message.author.bot) return;
+
+  // Check if this is a reply to a bot message
+  const referencedMessage = message.reference
+    ? await message.fetchReference().catch(() => null)
+    : null;
+
+  if (!referencedMessage || !referencedMessage.author?.bot) return;
+
+  // Check if this message references a session
+  const session = SESSIONS.getSessionByDiscordMessage(referencedMessage.id);
+  if (!session) return;
+
+  // User replied to a session - create a new task with feedback
+  log(`Received feedback on session ${session.id}: ${message.content}`);
+
+  const feedbackTask = `Resume session ${session.id} with the following feedback:\n\n${message.content}\n\nPrevious task context:\n${session.task}`;
+
+  addTask(feedbackTask);
+
+  await message.reply(
+    `Thanks for the feedback! I've added a new task to resume the session:\n\`${session.task}\`\n\nYour feedback:\n>${message.content}`,
+  );
+
+  // Suspend the current session
+  SCHEDULER.suspendSession(session.id, "awaiting resumption with feedback");
+});
+
+// GitHub PR Webhook handler (polling-based for PR comments)
+let lastGitHubCheck = 0;
+const GITHUB_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+async function checkGitHubPRComments() {
+  const now = Date.now();
+  if (now - lastGitHubCheck < GITHUB_CHECK_INTERVAL) return;
+  lastGitHubCheck = now;
+
+  const sessions = SESSIONS.getActiveSessions();
+  for (const session of sessions) {
+    if (!session.prNumber || !session.prRepo) continue;
+
+    // Check PR comments for resumption requests
+    const prComments = await fetchPRComments(
+      session.prRepo,
+      session.prNumber,
+    ).catch(() => []);
+
+    // Look for comments with specific patterns like "/resume" or "continue"
+    const resumeComment = prComments.find((c) =>
+      /\/resume|continue this|resum[e] session/i.test(c.body),
+    );
+
+    if (resumeComment) {
+      log(`Found resumption request on PR #${session.prNumber}: ${resumeComment.body}`);
+
+      const feedbackTask = `Resume session ${session.id} with PR #${
+        session.prNumber
+      } review feedback:\n\n${resumeComment.body}`;
+
+      addTask(feedbackTask);
+      SESSIONS.completeSession(session.id);
+    }
+  }
+}
+
+// Fetch PR comments from GitHub API
+async function fetchPRComments(repo, prNumber) {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) return [];
+
+  const [owner, name] = repo.split("/");
+  if (!owner || !name) return [];
+
+  return new Promise((resolve, reject) => {
+    const url = `https://api.github.com/repos/${owner}/${name}/issues/${prNumber}/comments`;
+
+    const options = {
+      hostname: "api.github.com",
+      path: url,
+      method: "GET",
+      headers: {
+        "Authorization": `token ${token}`,
+        "User-Agent": "dude-agent",
+        "Accept": "application/vnd.github.v3+json",
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        if (res.statusCode === 200) {
+          try {
+            resolve(JSON.parse(data) || []);
+          } catch (e) {
+            resolve([]);
+          }
+        } else {
+          resolve([]);
+        }
+      });
+    });
+
+    req.on("error", (e) => reject(e));
+    req.setTimeout(10000, () => {
+      req.destroy();
+      resolve([]);
+    });
+    req.end();
+  });
+}
 
 // Parse schedule time string into Date
 function parseScheduleTime(timeStr) {
@@ -700,6 +898,19 @@ Context:
     statusMessage = await interaction.followUp(
       `**Current Task:** ${task}\n**Status:** ${currentStatus}`,
     );
+    
+    // Create a session for this task run
+    try {
+      const session = SESSIONS.createSession(task, {
+        discordMessageId: statusMessage.id,
+        discordChannelId: statusMessage.channelId,
+        workspacePath: config.workDir,
+        prompt: prompt.substring(0, 2000), // Store prompt snippet
+      });
+      log(`Created session ${session.id} for task: ${task}`);
+    } catch (e) {
+      log(`Failed to create session: ${e.message}`);
+    }
   }
 
   const updateDiscordStatus = async (force = false) => {
@@ -891,6 +1102,15 @@ Context:
       log("pi finished successfully.");
       currentStatus = "Completed successfully.";
       await updateDiscordStatus(true);
+      
+      // Complete the session
+      try {
+        SESSIONS.completeSession(statusMessage.id);
+        SESSIONS.archiveCompletedSessions();
+      } catch (e) {
+        log(`Failed to complete session: ${e.message}`);
+      }
+      
       if (interaction) {
         const cleanedOutput = stripAnsi(piOutput.trim());
         const truncatedOutput =
