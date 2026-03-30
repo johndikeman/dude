@@ -101,7 +101,7 @@
                 WorkingDirectory = config.services.dude-agent.workingDirectory;
                 ExecStartPre = [
                   "${pkgs.coreutils}/bin/mkdir -p ${config.services.dude-agent.configDirectory}"
-                  "${pkgs._1password-cli}/bin/op run --env-file ${config.services.dude-agent.package}/.opvars -- /usr/bin/bash -c \"[ -z \"$GEMINI_JSON_TOKEN\" ] || echo \"$GEMINI_JSON_TOKEN\" > ~/.pi/agent/auth.json\""
+                  "${pkgs._1password-cli}/bin/op run --env-file ${config.services.dude-agent.package}/.opvars -- /usr/bin/bash -c \"[ -z \'$GEMINI_JSON_TOKEN\' ] || echo \'$GEMINI_JSON_TOKEN\' > ~/.pi/agent/auth.json\""
                 ];
                 ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${config.services.dude-agent.package}/.opvars -- ${config.services.dude-agent.package}/bin/dude-agent";
                 Restart = "always";
