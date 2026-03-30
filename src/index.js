@@ -571,6 +571,25 @@ function addTask(task) {
   fs.writeFileSync(TASKS_FILE, content);
 }
 
+function removeTaskFromPending(task) {
+  if (!fs.existsSync(TASKS_FILE)) return false;
+  let content = fs.readFileSync(TASKS_FILE, "utf8");
+  const originalContent = content;
+  
+  // Remove the specific task from pending tasks
+  content = content.replace(new RegExp(`- \\[ \\] ${task.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n?`, "s"), "");
+  
+  // Clean up empty lines and restore the header if needed
+  content = content.replace("# Pending Tasks\n\n", "# Pending Tasks\n");
+  
+  if (content !== originalContent) {
+    fs.writeFileSync(TASKS_FILE, content);
+    log(`Removed task from pending: ${task}`);
+    return true;
+  }
+  return false;
+}
+
 async function getGeminiApiKey() {
   if (process.env.GEMINI_JSON_TOKEN) {
     try {
@@ -767,6 +786,9 @@ Context:
             const paused = SCHEDULER.pauseTask(task, errorInfo);
             pausedTaskId = paused.id;
 
+            // Remove the task from pending tasks in tasks.md to prevent retry
+            removeTaskFromPending(task);
+
             // Schedule task as a scheduled task for after quota reset
             SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
             updateDiscordStatus(true);
@@ -786,6 +808,9 @@ Context:
             // Pause the task
             const paused = SCHEDULER.pauseTask(task, errorInfo);
             pausedTaskId = paused.id;
+
+            // Remove the task from pending tasks in tasks.md to prevent retry
+            removeTaskFromPending(task);
 
             // Schedule task as a scheduled task for after quota reset
             SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
@@ -812,6 +837,9 @@ Context:
             // Pause the task
             const paused = SCHEDULER.pauseTask(task, errorInfo);
             pausedTaskId = paused.id;
+
+            // Remove the task from pending tasks in tasks.md to prevent retry
+            removeTaskFromPending(task);
 
             // Schedule task as a scheduled task for after quota reset
             SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
@@ -841,6 +869,9 @@ Context:
         // Pause the task
         const paused = SCHEDULER.pauseTask(task, errorInfo);
         pausedTaskId = paused.id;
+
+        // Remove the task from pending tasks in tasks.md to prevent retry
+        removeTaskFromPending(task);
 
         // Schedule task as a scheduled task for after quota reset
         SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
@@ -908,6 +939,14 @@ Context:
           response += `\n\n**Output so far:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
         }
         interaction.followUp(response);
+      }
+
+      // If autoNext is enabled, start the next task (quota-paused task was already removed from pending)
+      if (config.autoNext) {
+        log("autoNext is enabled, starting next task after quota pause...");
+        setTimeout(() => {
+          runCycle();
+        }, 5000);
       }
     } else {
       let errorMsg = `**pi failed with code ${code}**\n\n`;
