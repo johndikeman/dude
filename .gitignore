@@ -1,0 +1,6 @@
+.env
+agent.log
+node_modules/
+schedule.json
+tasks.md
+/dude/.gitignore
