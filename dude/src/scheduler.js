@@ -64,7 +64,7 @@ function isQuotaError(output) {
   // This is more specific to avoid false positives from text about quota handling
   const has429 = output.includes("429");
   const hasCapacityError = output.includes("exhausted your capacity");
-  const hasQuotaReset = output.includes("quota will reset") || output.includes("Quota exhausted");
+  const hasQuotaReset = output.includes("quota will reset") || output.includes("Quota exhausted") || output.includes("quota limit reached");
   const hasRateLimit = output.includes("rate limit exceeded");
   
   // Check if it's likely an actual error (has 429 AND one of the error messages)

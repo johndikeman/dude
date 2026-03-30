@@ -169,10 +169,14 @@ const commands = [
     .addStringOption((option) =>
       option
         .setName("code")
-        .setDescription(
-          "the model code, ie gemini-3-flash-preview, gemini-3-pro-preview, qwen3.5:122b, gemini-2.5-pro",
-        )
-        .setRequired(true),
+        .setDescription("the model code")
+        .setRequired(true)
+        .addChoices(
+          { name: "gemini-3-flash-preview", value: "gemini-3-flash-preview" },
+          { name: "gemini-3-pro-preview", value: "gemini-3-pro-preview" },
+          { name: "qwen3.5:122b", value: "qwen3.5:122b" },
+          { name: "gemini-2.5-pro", value: "gemini-2.5-pro" },
+        ),
     ),
 ];
 
