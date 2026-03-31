@@ -55,22 +55,34 @@ export function createSession(task, options = {}) {
   return session;
 }
 
-// Get an active session by ID
+// Get a session by ID
 export function getSession(sessionId) {
   const sessions = loadSessions();
-  return sessions.active.find((s) => s.id === sessionId) || null;
+  return (
+    sessions.active.find((s) => s.id === sessionId) ||
+    sessions.completed.find((s) => s.id === sessionId) ||
+    null
+  );
 }
 
 // Get session by Discord message ID
 export function getSessionByDiscordMessage(messageId) {
   const sessions = loadSessions();
-  return sessions.active.find((s) => s.discordMessageId === messageId) || null;
+  return (
+    sessions.active.find((s) => s.discordMessageId === messageId) ||
+    sessions.completed.find((s) => s.discordMessageId === messageId) ||
+    null
+  );
 }
 
 // Get session by PR number and repo
 export function getSessionByPR(prNumber, prRepo) {
   const sessions = loadSessions();
-  return sessions.active.find((s) => s.prNumber === prNumber && s.prRepo === prRepo) || null;
+  return (
+    sessions.active.find((s) => s.prNumber === prNumber && s.prRepo === prRepo) ||
+    sessions.completed.find((s) => s.prNumber === prNumber && s.prRepo === prRepo) ||
+    null
+  );
 }
 
 // Update a session

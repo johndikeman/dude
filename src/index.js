@@ -406,8 +406,11 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (commandName === "start") {
-    await interaction.reply("Starting self-improvement cycle...");
-    runCycle(interaction);
+    const response = await interaction.reply({
+      content: "Starting self-improvement cycle...",
+      fetchReply: true,
+    });
+    runCycle(interaction, response);
   }
 
   if (commandName === "restart") {
@@ -813,7 +816,7 @@ async function getGeminiApiKey() {
   }
 }
 
-async function runCycle(interaction) {
+async function runCycle(interaction, initialStatusMessage = null) {
   if (isRunning) {
     if (interaction) interaction.followUp("A task is already being processed.");
     return;
@@ -827,7 +830,7 @@ async function runCycle(interaction) {
 
   isRunning = true;
   const task = tasks[0];
-  if (interaction) interaction.followUp(`Working on task: ${task}`);
+  if (interaction && !initialStatusMessage) interaction.followUp(`Working on task: ${task}`);
   log(`Working on task: ${task}`);
 
   const apiKey = await getGeminiApiKey();
@@ -898,29 +901,31 @@ Context:
 
   let piOutput = "";
   let piError = "";
-  let statusMessage = null;
+  let statusMessage = initialStatusMessage;
+  let currentSessionId = null;
   let lastStatusUpdate = 0;
   const UPDATE_INTERVAL = 5000;
   let currentStatus = "Starting...";
   let pausedTaskId = null;
 
-  if (interaction) {
+  if (interaction && !statusMessage) {
     statusMessage = await interaction.followUp(
       `**Current Task:** ${task}\n**Status:** ${currentStatus}`,
     );
+  }
 
-    // Create a session for this task run
-    try {
-      const session = SESSIONS.createSession(task, {
-        discordMessageId: statusMessage.id,
-        discordChannelId: statusMessage.channelId,
-        workspacePath: config.workDir,
-        prompt: prompt.substring(0, 2000), // Store prompt snippet
-      });
-      log(`Created session ${session.id} for task: ${task}`);
-    } catch (e) {
-      log(`Failed to create session: ${e.message}`);
-    }
+  // Create a session for this task run
+  try {
+    const session = SESSIONS.createSession(task, {
+      discordMessageId: statusMessage ? statusMessage.id : null,
+      discordChannelId: statusMessage ? statusMessage.channelId : null,
+      workspacePath: config.workDir,
+      prompt: prompt.substring(0, 2000), // Store prompt snippet
+    });
+    currentSessionId = session.id;
+    log(`Created session ${currentSessionId} for task: ${task}`);
+  } catch (e) {
+    log(`Failed to create session: ${e.message}`);
   }
 
   const updateDiscordStatus = async (force = false) => {
@@ -1119,8 +1124,10 @@ Context:
 
       // Complete the session
       try {
-        SESSIONS.completeSession(statusMessage.id);
-        SESSIONS.archiveCompletedSessions();
+        if (currentSessionId) {
+          SESSIONS.completeSession(currentSessionId);
+          SESSIONS.archiveCompletedSessions();
+        }
       } catch (e) {
         log(`Failed to complete session: ${e.message}`);
       }
