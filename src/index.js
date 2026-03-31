@@ -12,8 +12,7 @@ const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const { execSync, spawn } = require("child_process");
-const stripAnsi = require("strip-ansi");
-
+import stripAnsi from "strip-ansi";
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
