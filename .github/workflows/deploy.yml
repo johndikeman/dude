@@ -16,11 +16,13 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -e
             [ -f /nix/var/nix/profiles/default/etc/profile.d/nix.sh ] && . /nix/var/nix/profiles/default/etc/profile.d/nix.sh
             export PATH=$PATH:/nix/var/nix/profiles/default/bin:~/.nix-profile/bin
             cd ~/.config/home-manager
+            git pull origin vps-nix
             nix flake update dude
             home-manager switch
             git add flake.lock
             git commit -m "chore: update dude flake.lock [skip ci]" || true
-            git push
+            git push origin vps-nix
