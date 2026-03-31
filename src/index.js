@@ -996,50 +996,37 @@ Context:
           }
         }
 
-        // Check for quota errors in stdout
-        if (SCHEDULER.isQuotaError(line)) {
-          const errorInfo = SCHEDULER.parseQuotaError(line);
-          if (errorInfo) {
-            log(`Quota error detected: ${errorInfo.errorMessage}`);
-            const hasTime =
-              errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
-            const waitInfo = hasTime
-              ? `until ${formatDuration(errorInfo.resetAfterMs)}`
-              : "until quota resets (estimated 1 hour)";
-            currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
-            // Pause the task
-            const paused = SCHEDULER.pauseTask(task, errorInfo);
-            pausedTaskId = paused.id;
-
-            // Remove the task from pending tasks in tasks.md to prevent retry
-            removeTaskFromPending(task);
-
-            // Schedule task as a scheduled task for after quota reset
-            SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
-            updateDiscordStatus(true);
+        // Check for quota errors in JSON events
+        let quotaErrorInfo = null;
+        const errorCandidates = [event.errorMessage, event.error].filter(
+          (m) => typeof m === "string",
+        );
+        for (const candidate of errorCandidates) {
+          if (SCHEDULER.isQuotaError(candidate)) {
+            quotaErrorInfo = SCHEDULER.parseQuotaError(candidate);
+            if (quotaErrorInfo) break;
           }
         }
 
-        // Handle quota errors in error messages
-        if (event.errorMessage && SCHEDULER.isQuotaError(event.error)) {
-          const errorInfo = SCHEDULER.parseQuotaError(event.errorMessage);
-          if (errorInfo) {
-            log(`Quota error detected in error: ${errorInfo.errorMessage}`);
-            currentStatus = `Quota exhausted. Pausing task until ${formatDuration(
-              errorInfo.resetAfterMs,
-            )}.`;
-            updateDiscordStatus(true);
+        if (quotaErrorInfo) {
+          log(`Quota error detected in JSON: ${quotaErrorInfo.errorMessage}`);
+          const hasTime =
+            quotaErrorInfo.resetAfterMs && quotaErrorInfo.resetAfterMs > 0;
+          const waitInfo = hasTime
+            ? `until ${formatDuration(quotaErrorInfo.resetAfterMs)}`
+            : "until quota resets (estimated 1 hour)";
+          currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
 
-            // Pause the task
-            const paused = SCHEDULER.pauseTask(task, errorInfo);
-            pausedTaskId = paused.id;
+          // Pause the task
+          const paused = SCHEDULER.pauseTask(task, quotaErrorInfo);
+          pausedTaskId = paused.id;
 
-            // Remove the task from pending tasks in tasks.md to prevent retry
-            removeTaskFromPending(task);
+          // Remove the task from pending tasks in tasks.md to prevent retry
+          removeTaskFromPending(task);
 
-            // Schedule task as a scheduled task for after quota reset
-            SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
-          }
+          // Schedule task as a scheduled task for after quota reset
+          SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
+          updateDiscordStatus(true);
         }
       } catch (e) {
         // Not valid JSON, treat as plain text
