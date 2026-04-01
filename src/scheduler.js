@@ -102,9 +102,28 @@ export function saveSchedule(schedule) {
   log(`Schedule saved: ${schedule.paused.length} paused tasks, ${schedule.scheduled.length} scheduled tasks`);
 }
 
+// Check if a task is already in the paused list
+function isTaskAlreadyPaused(schedule, task) {
+  return schedule.paused.some((t) => t.task === task);
+}
+
+// Check if a task is already in the scheduled list with a specific reason
+function isTaskAlreadyScheduled(schedule, task, reason = null) {
+  const tasks = schedule.scheduled.filter((t) => t.task === task);
+  if (!reason) return tasks.length > 0;
+  return tasks.some((t) => t.reason === reason);
+}
+
 // Pause a task due to quota error
 export function pauseTask(task, errorInfo) {
   const schedule = loadSchedule();
+  
+  // Check if task is already paused
+  if (isTaskAlreadyPaused(schedule, task)) {
+    log(`Task "${task}" is already paused, skipping duplicate pause`);
+    return schedule.paused.find((t) => t.task === task);
+  }
+  
   const now = Date.now();
   const resumeAt = now + errorInfo.resetAfterMs;
 
@@ -124,6 +143,12 @@ export function pauseTask(task, errorInfo) {
 // Schedule a task to run at a specific time
 export function scheduleTask(task, runAt, reason = "manual") {
   const schedule = loadSchedule();
+
+  // Check if task is already scheduled with the same reason
+  if (isTaskAlreadyScheduled(schedule, task, reason)) {
+    log(`Task "${task}" is already scheduled with reason "${reason}", skipping duplicate`);
+    return schedule.scheduled.find((t) => t.task === task && t.reason === reason);
+  }
 
   const scheduledTask = {
     id: Date.now().toString(),

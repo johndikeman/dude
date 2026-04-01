@@ -907,6 +907,7 @@ Context:
   const UPDATE_INTERVAL = 5000;
   let currentStatus = "Starting...";
   let pausedTaskId = null;
+  let quotaErrorHandled = false;
 
   if (interaction && !statusMessage) {
     statusMessage = await interaction.followUp(
@@ -1013,7 +1014,8 @@ Context:
           }
         }
 
-        if (quotaErrorInfo) {
+        if (quotaErrorInfo && !quotaErrorHandled) {
+          quotaErrorHandled = true;
           log(`Quota error detected in JSON: ${quotaErrorInfo.errorMessage}`);
           const hasTime =
             quotaErrorInfo.resetAfterMs && quotaErrorInfo.resetAfterMs > 0;
@@ -1042,7 +1044,8 @@ Context:
         }
 
         // Check for quota errors in plain text
-        if (SCHEDULER.isQuotaError(trimmed)) {
+        if (SCHEDULER.isQuotaError(trimmed) && !quotaErrorHandled) {
+          quotaErrorHandled = true;
           const errorInfo = SCHEDULER.parseQuotaError(trimmed);
           if (errorInfo) {
             log(`Quota error detected in text: ${errorInfo.errorMessage}`);
@@ -1072,7 +1075,8 @@ Context:
     process.stderr.write(s);
 
     // Also check stderr for quota errors
-    if (SCHEDULER.isQuotaError(s)) {
+    if (SCHEDULER.isQuotaError(s) && !quotaErrorHandled) {
+      quotaErrorHandled = true;
       const errorInfo = SCHEDULER.parseQuotaError(s);
       if (errorInfo) {
         log(`Quota error detected in stderr: ${errorInfo.errorMessage}`);
