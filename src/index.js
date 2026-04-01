@@ -1106,9 +1106,9 @@ Context:
     const schedule = SCHEDULER.loadSchedule();
     const isQuotaPause = schedule.scheduled.some(
       (t) => t.task === task && t.reason === "quota_resume",
-    );
+    ) || quotaErrorHandled;
 
-    if (code === 0) {
+    if (code === 0 && !isQuotaPause) {
       log("pi finished successfully.");
       currentStatus = "Completed successfully.";
       await updateDiscordStatus(true);
@@ -1142,7 +1142,7 @@ Context:
           runCycle();
         }, 5000);
       }
-    } else if (code !== 0 && isQuotaPause && pausedTaskId) {
+    } else if (isQuotaPause) {
       // Task was paused due to quota, already scheduled for resume
       log(`Task ${task} was paused due to quota, scheduled for resume.`);
       const resumeTime =
@@ -1161,7 +1161,7 @@ Context:
         let response = `Task ${task} was paused due to Google API quota exhaustion. Will resume automatically when quota resets.`;
 
         // Include the actual error message that was detected
-        const pausedTask = schedule.paused.find((t) => t.id === pausedTaskId);
+        const pausedTask = pausedTaskId ? schedule.paused.find((t) => t.id === pausedTaskId) : null;
         if (pausedTask?.errorInfo?.errorMessage) {
           const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 500);
           response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 500 ? "..." : ""}\n\`\`\``;
