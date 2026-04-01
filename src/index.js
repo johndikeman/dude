@@ -8,7 +8,6 @@ import {
   Routes,
   SlashCommandBuilder,
 } from "discord.js";
-import https from "https";
 import fs from "fs";
 import path from "path";
 import { execSync, spawn } from "child_process";
@@ -224,10 +223,8 @@ client.once("ready", async () => {
   setInterval(checkAndRunScheduledTasks, 5 * 60 * 1000);
 
   // Check GitHub PR comments for resume requests (every 5 minutes)
-  if (process.env.GITHUB_TOKEN) {
-    setInterval(checkGitHubPRComments, 5 * 60 * 1000);
-    log("GitHub PR comment checking enabled");
-  }
+  setInterval(checkGitHubPRComments, 5 * 60 * 1000);
+  log("GitHub PR comment checking enabled (via gh cli)");
 
   // Archive old sessions periodically (every hour)
   setInterval(
@@ -658,51 +655,21 @@ async function checkGitHubPRComments() {
   }
 }
 
-// Fetch PR comments from GitHub API
+// Fetch PR comments from GitHub using gh CLI
 async function fetchPRComments(repo, prNumber) {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) return [];
-
-  const [owner, name] = repo.split("/");
-  if (!owner || !name) return [];
-
-  return new Promise((resolve, reject) => {
-    const url = `https://api.github.com/repos/${owner}/${name}/issues/${prNumber}/comments`;
-
-    const options = {
-      hostname: "api.github.com",
-      path: url,
-      method: "GET",
-      headers: {
-        Authorization: `token ${token}`,
-        "User-Agent": "dude-agent",
-        Accept: "application/vnd.github.v3+json",
+  try {
+    const output = execSync(
+      `gh pr view ${prNumber} --repo ${repo} --json comments`,
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
       },
-    };
-
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => {
-        if (res.statusCode === 200) {
-          try {
-            resolve(JSON.parse(data) || []);
-          } catch (e) {
-            resolve([]);
-          }
-        } else {
-          resolve([]);
-        }
-      });
-    });
-
-    req.on("error", (e) => reject(e));
-    req.setTimeout(10000, () => {
-      req.destroy();
-      resolve([]);
-    });
-    req.end();
-  });
+    );
+    const data = JSON.parse(output);
+    return data.comments || [];
+  } catch (e) {
+    return [];
+  }
 }
 
 // Parse schedule time string into Date
