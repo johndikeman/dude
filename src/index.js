@@ -48,6 +48,8 @@ let config = {
 };
 
 let isRunning = false;
+let currentRunningTask = null;
+let pausedTaskInfo = null; // Store info about paused tasks for status display
 
 if (fs.existsSync(CONFIG_FILE)) {
   config = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
@@ -337,16 +339,42 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "status") {
     const tasks = getPendingTasks();
-    const status = [
+    const statusLines = [
       `**Status Report**`,
       `Working Directory: \`${config.workDir}\``,
       `Model: ${MODEL_CODE}`,
       `Auto-Next: ${config.autoNext ? "**ON**" : "OFF"}`,
-      `Pending Tasks: ${tasks.length}`,
-      tasks.length > 0 ? `Next Task: ${tasks[0]}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    ];
+    
+    if (isRunning && currentRunningTask) {
+      statusLines.push(`Agent: **RUNNING**`);
+      statusLines.push(`Current Task: ${currentRunningTask}`);
+    } else {
+      // Check for paused tasks that haven't expired yet
+      const schedule = SCHEDULER.loadSchedule();
+      const now = Date.now();
+      const activePauses = schedule.paused.filter((p) => p.resumeAt > now);
+      
+      if (activePauses.length > 0) {
+        statusLines.push(`Agent: **PAUSED** (quota)`);
+        statusLines.push(`Paused Task: ${activePauses[0].task}`);
+        if (activePauses[0].resumeAt) {
+          const resumeIn = Math.max(0, activePauses[0].resumeAt - now);
+          const minutes = Math.floor(resumeIn / 60000);
+          statusLines.push(`Resumes in: ~${minutes}m`);
+        }
+      } else {
+        statusLines.push(`Agent: idle`);
+      }
+    }
+    
+    statusLines.push(`Pending Tasks: ${tasks.length}`);
+    
+    if (tasks.length > 0 && !isRunning) {
+      statusLines.push(`Next Task: ${tasks[0]}`);
+    }
+    
+    const status = statusLines.join("\n");
     await interaction.reply(status);
   }
 
@@ -837,6 +865,7 @@ async function runCycle(interaction, initialStatusMessage = null) {
 
   isRunning = true;
   const task = tasks[0];
+  currentRunningTask = task;
   if (interaction && !initialStatusMessage) interaction.followUp(`Working on task: ${task}`);
   log(`Working on task: ${task}`);
 
@@ -899,6 +928,8 @@ Context:
 
   piProcess.on("error", async (err) => {
     isRunning = false;
+    currentRunningTask = null;
+    pausedTaskInfo = null;
     log(`Failed to start pi process: ${err.message}`);
     currentStatus = `Failed to start.`;
     await updateDiscordStatus(true);
@@ -1034,6 +1065,7 @@ Context:
           // Pause the task
           const paused = SCHEDULER.pauseTask(task, quotaErrorInfo);
           pausedTaskId = paused.id;
+          pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo: quotaErrorInfo };
 
           // Remove the task from pending tasks in tasks.md to prevent retry
           removeTaskFromPending(task);
@@ -1064,6 +1096,7 @@ Context:
             // Pause the task
             const paused = SCHEDULER.pauseTask(task, errorInfo);
             pausedTaskId = paused.id;
+            pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo };
 
             // Remove the task from pending tasks in tasks.md to prevent retry
             removeTaskFromPending(task);
@@ -1097,6 +1130,7 @@ Context:
         // Pause the task
         const paused = SCHEDULER.pauseTask(task, errorInfo);
         pausedTaskId = paused.id;
+        pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo };
 
         // Remove the task from pending tasks in tasks.md to prevent retry
         removeTaskFromPending(task);
@@ -1109,6 +1143,7 @@ Context:
 
   piProcess.on("close", async (code) => {
     isRunning = false;
+    currentRunningTask = null;
     // Check if this was a quota pause
     const schedule = SCHEDULER.loadSchedule();
     const isQuotaPause = schedule.scheduled.some(
@@ -1118,6 +1153,7 @@ Context:
     if (code === 0 && !isQuotaPause) {
       log("pi finished successfully.");
       currentStatus = "Completed successfully.";
+      pausedTaskInfo = null; // Clear paused task info for successful completion
       await updateDiscordStatus(true);
 
       // Complete the session
@@ -1151,6 +1187,7 @@ Context:
       }
     } else if (isQuotaPause) {
       // Task was paused due to quota, already scheduled for resume
+      // Keep pausedTaskInfo for status display
       log(`Task ${task} was paused due to quota, scheduled for resume.`);
       const resumeTime =
         schedule.scheduled.find(
@@ -1183,11 +1220,13 @@ Context:
       // If autoNext is enabled, start the next task (quota-paused task was already removed from pending)
       if (config.autoNext) {
         log("autoNext is enabled, starting next task after quota pause...");
+        // When the next task starts, it will set currentRunningTask and clear pausedTaskInfo
         setTimeout(() => {
           runCycle();
         }, 5000);
       }
     } else {
+      pausedTaskInfo = null; // Clear paused task info for failures
       let errorMsg = `**pi failed with code ${code}**\n\n`;
 
       const cleanError = stripAnsi(piError.trim());

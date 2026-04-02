@@ -219,6 +219,76 @@ test("handles task with special characters", () => {
   cleanupTasks();
 });
 
+// Status display tests
+console.log("\n=== Status Display Logic Tests ===");
+
+function buildStatusMsg(isRunning, currentRunningTask, pausedTaskInfo, pendingTasks) {
+  const lines = [
+    `**Status Report**`,
+    `Working Directory: /test/path`,
+    `Model: test-model`,
+    `Auto-Next: OFF`,
+  ];
+  
+  if (isRunning && currentRunningTask) {
+    lines.push(`Agent: **RUNNING**`);
+    lines.push(`Current Task: ${currentRunningTask}`);
+  } else if (pausedTaskInfo) {
+    lines.push(`Agent: **PAUSED** (quota)`);
+    lines.push(`Paused Task: ${pausedTaskInfo.task}`);
+  } else {
+    lines.push(`Agent: idle`);
+  }
+  
+  lines.push(`Pending Tasks: ${pendingTasks.length}`);
+  
+  // Don't show next task when running or paused
+  if (pendingTasks.length > 0 && !isRunning && !pausedTaskInfo) {
+    lines.push(`Next Task: ${pendingTasks[0]}`);
+  }
+  
+  return lines.join("\n");
+}
+
+test("status shows RUNNING when task is running", () => {
+  const status = buildStatusMsg(true, "my test task", null, []);
+  assert(status.includes("Agent: **RUNNING**"));
+  assert(status.includes("Current Task: my test task"));
+});
+
+test("status shows idle when no task and no paused tasks", () => {
+  const status = buildStatusMsg(false, null, null, []);
+  assert(status.includes("Agent: idle"));
+  assert(!status.includes("RUNNING"));
+  assert(!status.includes("PAUSED"));
+});
+
+test("status shows PAUSED when there are paused tasks", () => {
+  const status = buildStatusMsg(false, null, { task: "paused task" }, []);
+  assert(status.includes("Agent: **PAUSED** (quota)"));
+  assert(status.includes("Paused Task: paused task"));
+  assert(!status.includes("RUNNING"));
+  assert(!status.includes("idle"));
+});
+
+test("status shows pending next task when idle with pending tasks", () => {
+  const status = buildStatusMsg(false, null, null, ["task1", "task2"]);
+  assert(status.includes("Agent: idle"));
+  assert(status.includes("Next Task: task1"));
+});
+
+test("status does not show next task when running", () => {
+  const status = buildStatusMsg(true, "running task", null, ["task1", "task2"]);
+  assert(status.includes("Agent: **RUNNING**"));
+  assert(!status.includes("Next Task:"));
+});
+
+test("status does not show next task when paused", () => {
+  const status = buildStatusMsg(false, null, { task: "paused task" }, ["task1", "task2"]);
+  assert(status.includes("Agent: **PAUSED** (quota)"));
+  assert(!status.includes("Next Task:"));
+});
+
 console.log(`\n=== Results ===`);
 console.log(`  Passed: ${passed}`);
 console.log(`  Failed: ${failed}`);
