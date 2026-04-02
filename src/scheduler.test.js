@@ -109,6 +109,10 @@ function createMockScheduler() {
       }
       return null;
     },
+    getScheduledTask: (taskId) => {
+      const schedule = createMockScheduler().loadSchedule();
+      return schedule.scheduled.find((t) => t.id === taskId) || null;
+    },
     suspendSession: (sessionId, reason = "awaiting feedback") => {
       const schedule = createMockScheduler().loadSchedule();
       schedule.suspendedSessions = schedule.suspendedSessions || [];
@@ -281,6 +285,24 @@ function runTests() {
     const removed = scheduler.cancelScheduledTask(scheduled.id);
     assert(removed.task === "test");
     assert(scheduler.listScheduledTasks().length === 0);
+    cleanup();
+  });
+  test("gets a scheduled task by ID", () => {
+    cleanup();
+    const runAt = Date.now() + 300000;
+    const scheduled = scheduler.scheduleTask("test task", runAt, "test");
+    const task = scheduler.getScheduledTask(scheduled.id);
+    assert(task !== null);
+    assert(task.task === "test task");
+    assert(task.id === scheduled.id);
+    // Task should still be in the scheduled list
+    assert(scheduler.listScheduledTasks().length === 1);
+    cleanup();
+  });
+  test("returns null for non-existent scheduled task", () => {
+    cleanup();
+    const task = scheduler.getScheduledTask("nonexistent-id");
+    assert(task === null);
     cleanup();
   });
 

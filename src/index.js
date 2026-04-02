@@ -155,6 +155,15 @@ const commands = [
         .setRequired(false),
     ),
   new SlashCommandBuilder()
+    .setName("run-scheduled")
+    .setDescription("Run a scheduled task immediately")
+    .addStringOption((option) =>
+      option
+        .setName("id")
+        .setDescription("The ID of the scheduled task")
+        .setRequired(true),
+    ),
+  new SlashCommandBuilder()
     .setName("autonext")
     .setDescription("Toggle automatic processing of the next task in the queue")
     .addStringOption((option) =>
@@ -518,6 +527,36 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
+  if (commandName === "run-scheduled") {
+    const taskId = options.getString("id");
+    await interaction.deferReply();
+    try {
+      const scheduled = SCHEDULER.getScheduledTask(taskId);
+      if (!scheduled) {
+        await interaction.editReply(`No scheduled task found with ID: ${taskId}`);
+        return;
+      }
+      // Remove from scheduled tasks
+      const removed = SCHEDULER.cancelScheduledTask(taskId);
+      // Add the task back to queue to be picked up
+      addTask(removed.task);
+      await interaction.editReply(
+        `Scheduled task is now running immediately!\n**Task:** ${removed.task}\n**Was scheduled for:** ${new Date(
+          removed.runAt,
+        ).toLocaleString()}`,
+      );
+
+      // If autoNext is enabled, start working if not already running
+      if (config.autoNext && !isRunning) {
+        log("autoNext is enabled, starting cycle after running scheduled task...");
+        runCycle();
+      }
+    } catch (err) {
+      log(`Error running scheduled task: ${err.message}`);
+      await interaction.editReply(`Failed to run scheduled task: ${err.message}`);
+    }
+  }
+
   if (commandName === "sessions") {
     const activeSessions = SESSIONS.getActiveSessions();
     if (activeSessions.length === 0) {
@@ -573,8 +612,9 @@ client.on("interactionCreate", async (interaction) => {
         `/workdir <path> - Change working directory`,
         `/start - Start working on the next task`,
         `/schedule <task> <time> - Schedule a task`,
-        `/paused - List paused tasks`,
         `/scheduled - List scheduled tasks`,
+        `/run-scheduled <id> - Run a scheduled task immediately`,
+        `/paused - List paused tasks`,
         `/resume <id> - Resume a paused task`,
         `/cancel <id> [type] - Cancel a task`,
         `/sessions - List active sessions`,
