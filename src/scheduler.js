@@ -253,6 +253,12 @@ export function cancelScheduledTask(taskId) {
   return null;
 }
 
+// Get a scheduled task by ID without removing it
+export function getScheduledTask(taskId) {
+  const schedule = loadSchedule();
+  return schedule.scheduled.find((t) => t.id === taskId) || null;
+}
+
 // Suspend a session for later resumption with feedback
 export function suspendSession(sessionId, reason = "awaiting feedback") {
   const schedule = loadSchedule();
