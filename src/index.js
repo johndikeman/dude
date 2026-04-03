@@ -47,6 +47,7 @@ let config = {
   autoNext: false,
   statusUpdateInterval: 120000, // 2 minutes in ms
   statusUpdateModel: "gemini-2.0-flash",
+  lastChannelId: null,
 };
 
 let isRunning = false;
@@ -331,6 +332,12 @@ async function checkAndRunScheduledTasks() {
 
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
+
+  // Store channel ID for autoNext status updates
+  if (interaction.channelId && config.lastChannelId !== interaction.channelId) {
+    config.lastChannelId = interaction.channelId;
+    saveConfig();
+  }
 
   const { commandName, options } = interaction;
 
@@ -701,6 +708,12 @@ client.on("messageCreate", async (message) => {
   // Ignore bot messages
   if (message.author.bot) return;
 
+  // Store channel ID for autoNext status updates
+  if (message.channelId && config.lastChannelId !== message.channelId) {
+    config.lastChannelId = message.channelId;
+    saveConfig();
+  }
+
   // Check if this is a reply to a bot message
   const referencedMessage = message.reference
     ? await message.fetchReference().catch(() => null)
@@ -909,7 +922,6 @@ async function runCycle(interaction, initialStatusMessage = null) {
   isRunning = true;
   const task = tasks[0];
   currentRunningTask = task;
-  if (interaction && !initialStatusMessage) interaction.followUp(`Working on task: ${task}`);
   log(`Working on task: ${task}`);
 
   const apiKey = await getGeminiApiKey();
@@ -1009,10 +1021,23 @@ Context:
   let pausedTaskId = null;
   let quotaErrorHandled = false;
 
-  if (interaction && !statusMessage) {
-    statusMessage = await interaction.followUp(
-      `**Current Task:** ${task}\n**Status:** ${currentStatus}`,
-    );
+  if (!statusMessage) {
+    const statusContent = `**Current Task:** ${task}\n**Status:** ${currentStatus}`;
+    if (interaction) {
+      statusMessage = await interaction.followUp({
+        content: statusContent,
+        fetchReply: true,
+      });
+    } else if (config.lastChannelId) {
+      try {
+        const channel = await client.channels.fetch(config.lastChannelId);
+        if (channel && channel.isTextBased()) {
+          statusMessage = await channel.send(statusContent);
+        }
+      } catch (e) {
+        log(`Failed to send auto-next status message: ${e.message}`);
+      }
+    }
   }
 
   // Create a session for this task run
@@ -1243,6 +1268,15 @@ Context:
         interaction.followUp(
           truncatedOutput || "Task completed successfully (no output).",
         );
+      } else if (statusMessage) {
+        const cleanedOutput = stripAnsi(piOutput.trim());
+        const truncatedOutput =
+          cleanedOutput.length > 1900
+            ? "..." + cleanedOutput.slice(-1900)
+            : cleanedOutput;
+        statusMessage.reply(
+          truncatedOutput || "Task completed successfully (no output).",
+        );
       }
 
       // If autoNext is enabled, start the next task
@@ -1283,6 +1317,26 @@ Context:
           response += `\n\n**Output so far:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
         }
         interaction.followUp(response);
+      } else if (statusMessage) {
+        const cleanedOutput = stripAnsi(piOutput.trim());
+        const truncatedOutput =
+          cleanedOutput.length > 1500
+            ? "..." + cleanedOutput.slice(-1500)
+            : cleanedOutput;
+
+        let response = `Task ${task} was paused due to Google API quota exhaustion. Will resume automatically when quota resets.`;
+
+        // Include the actual error message that was detected
+        const pausedTask = pausedTaskId ? schedule.paused.find((t) => t.id === pausedTaskId) : null;
+        if (pausedTask?.errorInfo?.errorMessage) {
+          const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 500);
+          response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 500 ? "..." : ""}\n\`\`\``;
+        }
+
+        if (truncatedOutput) {
+          response += `\n\n**Output so far:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
+        }
+        statusMessage.reply(response);
       }
 
       // If autoNext is enabled, start the next task (quota-paused task was already removed from pending)
@@ -1326,6 +1380,11 @@ Context:
           errorMsg = errorMsg.slice(0, 1997) + "...";
         }
         interaction.followUp(errorMsg);
+      } else if (statusMessage) {
+        if (errorMsg.length > 2000) {
+          errorMsg = errorMsg.slice(0, 1997) + "...";
+        }
+        statusMessage.reply(errorMsg);
       }
       log(`pi failed with code ${code}.`);
     }
