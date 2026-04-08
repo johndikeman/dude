@@ -947,7 +947,7 @@ if the task is to improve yourself, this will be in the dude/ directory. if the 
 you can clone other repositories if needed.
 Create a feature branch to work on, REMEMBER TO ALWAYS FIRST pull in the most recent 'main' branch and use it as the base of your feature branch in case another user has made changes, to avoid a merge conflict.
 when appropriate, write testcases to test new code.
-When you are working on a task, you can report your status by printing a line starting with [STATUS] followed by your current activity. This status will be displayed in Discord.
+IMPORTANT: When you are working on a task, periodically report your status by printing a line starting with [STATUS] followed by your current activity. This status will be displayed in Discord.
 Then, commit the code to the feature branch and open a PR using gh cli.
 When the task is complete, mark it as done in the task file (${TASKS_FILE}) by changing [ ] to [x].
 make sure your final message is a summary of the work that was done, or an explanation of the failure.
