@@ -377,7 +377,7 @@ client.on("interactionCreate", async (interaction) => {
       `Model: ${MODEL_CODE}`,
       `Auto-Next: ${config.autoNext ? "**ON**" : "OFF"}`,
     ];
-    
+
     if (isRunning && currentRunningTask) {
       statusLines.push(`Agent: **RUNNING**`);
       statusLines.push(`Current Task: ${currentRunningTask}`);
@@ -386,7 +386,7 @@ client.on("interactionCreate", async (interaction) => {
       const schedule = SCHEDULER.loadSchedule();
       const now = Date.now();
       const activePauses = schedule.paused.filter((p) => p.resumeAt > now);
-      
+
       if (activePauses.length > 0) {
         statusLines.push(`Agent: **PAUSED** (quota)`);
         statusLines.push(`Paused Task: ${activePauses[0].task}`);
@@ -399,13 +399,13 @@ client.on("interactionCreate", async (interaction) => {
         statusLines.push(`Agent: idle`);
       }
     }
-    
+
     statusLines.push(`Pending Tasks: ${tasks.length}`);
-    
+
     if (tasks.length > 0 && !isRunning) {
       statusLines.push(`Next Task: ${tasks[0]}`);
     }
-    
+
     const status = statusLines.join("\n");
     await interaction.reply(status);
   }
@@ -593,7 +593,9 @@ client.on("interactionCreate", async (interaction) => {
     try {
       const scheduled = SCHEDULER.getScheduledTask(taskId);
       if (!scheduled) {
-        await interaction.editReply(`No scheduled task found with ID: ${taskId}`);
+        await interaction.editReply(
+          `No scheduled task found with ID: ${taskId}`,
+        );
         return;
       }
       // Remove from scheduled tasks
@@ -608,12 +610,16 @@ client.on("interactionCreate", async (interaction) => {
 
       // If autoNext is enabled, start working if not already running
       if (config.autoNext && !isRunning) {
-        log("autoNext is enabled, starting cycle after running scheduled task...");
+        log(
+          "autoNext is enabled, starting cycle after running scheduled task...",
+        );
         runCycle();
       }
     } catch (err) {
       log(`Error running scheduled task: ${err.message}`);
-      await interaction.editReply(`Failed to run scheduled task: ${err.message}`);
+      await interaction.editReply(
+        `Failed to run scheduled task: ${err.message}`,
+      );
     }
   }
 
@@ -1022,10 +1028,14 @@ Context:
     statusUpdateInterval = setInterval(async () => {
       if (!isRunning || !currentSessionId) return;
       try {
-        await runStatusSummarizer(sessionFilePath, (newStatus) => {
-          currentStatus = newStatus;
-          updateDiscordStatus(true);
-        }, task);
+        await runStatusSummarizer(
+          sessionFilePath,
+          (newStatus) => {
+            currentStatus = newStatus;
+            updateDiscordStatus(true);
+          },
+          task,
+        );
       } catch (e) {
         log(`Error running status summarizer: ${e.message}`);
       }
@@ -1161,7 +1171,11 @@ Context:
           // Pause the task
           const paused = SCHEDULER.pauseTask(task, quotaErrorInfo);
           pausedTaskId = paused.id;
-          pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo: quotaErrorInfo };
+          pausedTaskInfo = {
+            task,
+            resumeAt: paused.resumeAt,
+            errorInfo: quotaErrorInfo,
+          };
 
           // Remove the task from pending tasks in tasks.md to prevent retry
           removeTaskFromPending(task);
@@ -1243,9 +1257,10 @@ Context:
     currentRunningTask = null;
     // Check if this was a quota pause
     const schedule = SCHEDULER.loadSchedule();
-    const isQuotaPause = schedule.scheduled.some(
-      (t) => t.task === task && t.reason === "quota_resume",
-    ) || quotaErrorHandled;
+    const isQuotaPause =
+      schedule.scheduled.some(
+        (t) => t.task === task && t.reason === "quota_resume",
+      ) || quotaErrorHandled;
 
     if (code === 0 && !isQuotaPause) {
       log("pi finished successfully.");
@@ -1311,7 +1326,9 @@ Context:
         let response = `Task ${task} was paused due to Google API quota exhaustion. Will resume automatically when quota resets.`;
 
         // Include the actual error message that was detected
-        const pausedTask = pausedTaskId ? schedule.paused.find((t) => t.id === pausedTaskId) : null;
+        const pausedTask = pausedTaskId
+          ? schedule.paused.find((t) => t.id === pausedTaskId)
+          : null;
         if (pausedTask?.errorInfo?.errorMessage) {
           const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 500);
           response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 500 ? "..." : ""}\n\`\`\``;
@@ -1331,7 +1348,9 @@ Context:
         let response = `Task ${task} was paused due to Google API quota exhaustion. Will resume automatically when quota resets.`;
 
         // Include the actual error message that was detected
-        const pausedTask = pausedTaskId ? schedule.paused.find((t) => t.id === pausedTaskId) : null;
+        const pausedTask = pausedTaskId
+          ? schedule.paused.find((t) => t.id === pausedTaskId)
+          : null;
         if (pausedTask?.errorInfo?.errorMessage) {
           const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 500);
           response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 500 ? "..." : ""}\n\`\`\``;
