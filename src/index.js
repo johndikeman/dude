@@ -960,6 +960,39 @@ Context:
 - Current working directory: ${config.workDir}
 `;
 
+  let piOutput = "";
+  let piError = "";
+  let statusMessage = initialStatusMessage;
+  let currentSessionId = null;
+  let lastStatusUpdate = 0;
+  const UPDATE_INTERVAL = 5000;
+  let currentStatus = "Starting...";
+  let pausedTaskId = null;
+  let quotaErrorHandled = false;
+
+  // Create a session for this task run
+  try {
+    const session = SESSIONS.createSession(task, {
+      discordMessageId: statusMessage ? statusMessage.id : null,
+      discordChannelId: statusMessage ? statusMessage.channelId : null,
+      workspacePath: config.workDir,
+      prompt: prompt.substring(0, 2000), // Store prompt snippet
+    });
+    currentSessionId = session.id;
+    log(`Created session ${currentSessionId} for task: ${task}`);
+  } catch (e) {
+    log(`Failed to create session: ${e.message}`);
+  }
+
+  const sessionFilePath = path.join(
+    CONFIG_DIR,
+    "sessions",
+    `${currentSessionId || Date.now()}.jsonl`,
+  );
+  if (!fs.existsSync(path.dirname(sessionFilePath))) {
+    fs.mkdirSync(path.dirname(sessionFilePath), { recursive: true });
+  }
+
   const piArgs = [
     "--provider",
     MODEL_PROVIDER,
@@ -1011,16 +1044,6 @@ Context:
       interaction.followUp(`Failed to start pi process: ${err.message}`);
   });
 
-  let piOutput = "";
-  let piError = "";
-  let statusMessage = initialStatusMessage;
-  let currentSessionId = null;
-  let lastStatusUpdate = 0;
-  const UPDATE_INTERVAL = 5000;
-  let currentStatus = "Starting...";
-  let pausedTaskId = null;
-  let quotaErrorHandled = false;
-
   if (!statusMessage) {
     const statusContent = `**Current Task:** ${task}\n**Status:** ${currentStatus}`;
     if (interaction) {
@@ -1038,25 +1061,6 @@ Context:
         log(`Failed to send auto-next status message: ${e.message}`);
       }
     }
-  }
-
-  // Create a session for this task run
-  try {
-    const session = SESSIONS.createSession(task, {
-      discordMessageId: statusMessage ? statusMessage.id : null,
-      discordChannelId: statusMessage ? statusMessage.channelId : null,
-      workspacePath: config.workDir,
-      prompt: prompt.substring(0, 2000), // Store prompt snippet
-    });
-    currentSessionId = session.id;
-    log(`Created session ${currentSessionId} for task: ${task}`);
-  } catch (e) {
-    log(`Failed to create session: ${e.message}`);
-  }
-
-  const sessionFilePath = path.join(CONFIG_DIR, "sessions", `${currentSessionId || Date.now()}.jsonl`);
-  if (!fs.existsSync(path.dirname(sessionFilePath))) {
-    fs.mkdirSync(path.dirname(sessionFilePath), { recursive: true });
   }
 
   const updateDiscordStatus = async (force = false) => {
