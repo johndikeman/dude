@@ -34,6 +34,7 @@ export function parseQuotaError(errorMessage) {
   // Also handles cases where no time is specified
   const timeMatch = errorMessage.match(/quota will reset after ([0-9]+h)?([0-9]+m)?([0-9]+s)?/i);
   const quotaExhaustedMatch = errorMessage.match(/you have exhausted your capacity|quota exhausted|rate limit exceeded/i);
+  const noCapacityMatch = errorMessage.match(/no capacity available/i);
 
   if (timeMatch) {
     const timeStr = timeMatch[0].replace("quota will reset after ", "");
@@ -46,7 +47,7 @@ export function parseQuotaError(errorMessage) {
   }
 
   // If we found a quota exhaustion error but no time is specified, use a default
-  if (quotaExhaustedMatch) {
+  if (quotaExhaustedMatch || noCapacityMatch) {
     // Default to 1 hour (3600000 ms) when no reset time is specified
     return {
       type: "quota_exhausted",
@@ -64,19 +65,20 @@ export function isQuotaError(output) {
   // This is more specific to avoid false positives from text about quota handling
   const has429 = output.includes("429");
   const hasCapacityError = output.includes("exhausted your capacity");
+  const hasNoCapacity = output.includes("no capacity available");
   const hasQuotaReset = output.includes("quota will reset") || output.includes("Quota exhausted") || output.includes("quota limit reached");
   const hasRateLimit = output.includes("rate limit exceeded");
   
   // Check if it's likely an actual error (has 429 AND one of the error messages)
-  if (has429 && (hasCapacityError || hasQuotaReset || hasRateLimit)) {
+  if (has429 && (hasCapacityError || hasNoCapacity || hasQuotaReset || hasRateLimit)) {
     return true;
   }
   
   // Also match common quota error patterns without 429 (some APIs return different codes)
   const hasClearQuotaError = (
-    (hasCapacityError || hasQuotaReset) && 
+    (hasCapacityError || hasQuotaReset || hasNoCapacity) && 
     output.includes("error") && 
-    output.includes("capacity")
+    (output.includes("capacity") || output.includes("quota"))
   );
   
   return hasClearQuotaError;

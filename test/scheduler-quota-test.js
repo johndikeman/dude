@@ -1,5 +1,5 @@
-const { parseQuotaError, isQuotaError } = require("../src/scheduler");
-const assert = require("assert");
+import { parseQuotaError, isQuotaError } from "../src/scheduler.js";
+import assert from "assert";
 
 // Test cases for parseQuotaError with time
 const testCasesWithTime = [
@@ -60,6 +60,20 @@ const testCasesWithoutTime = [
     expectType: "quota_exhausted",
     expectTimeMs: 3600000, // default 1 hour
   },
+  {
+    name: "no capacity available without time",
+    input:
+      "Cloud Code Assist API error (429): No capacity available for model gemini-3-flash-preview on the server",
+    expectType: "quota_exhausted",
+    expectTimeMs: 3600000, // default 1 hour
+  },
+  {
+    name: "no capacity available generic",
+    input:
+      "API error: No capacity available for the requested model.",
+    expectType: "quota_exhausted",
+    expectTimeMs: 3600000, // default 1 hour
+  },
 ];
 
 // Test cases that should NOT be detected as quota errors
@@ -84,6 +98,12 @@ const nonQuotaTestCases = [
   {
     name: "404 not found",
     input: "404: Resource not found.",
+    shouldBeQuota: false,
+  },
+  {
+    name: "text mentioning capacity but not an error",
+    input:
+      "We need to check if there is no capacity available for the scheduled meeting.",
     shouldBeQuota: false,
   },
 ];
