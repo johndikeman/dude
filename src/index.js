@@ -1148,9 +1148,11 @@ Context:
 
         // Check for quota errors in JSON events
         let quotaErrorInfo = null;
-        const errorCandidates = [event.errorMessage, event.error].filter(
-          (m) => typeof m === "string",
-        );
+        const errorCandidates = [
+          event.errorMessage,
+          event.error,
+          event.finalError,
+        ].filter((m) => typeof m === "string");
         for (const candidate of errorCandidates) {
           if (SCHEDULER.isQuotaError(candidate)) {
             quotaErrorInfo = SCHEDULER.parseQuotaError(candidate);
@@ -1161,9 +1163,7 @@ Context:
         if (quotaErrorInfo && !quotaErrorHandled) {
           quotaErrorHandled = true;
           log(`Quota error detected in JSON: ${quotaErrorInfo.errorMessage}`);
-          const hasTime =
-            quotaErrorInfo.resetAfterMs && quotaErrorInfo.resetAfterMs > 0;
-          const waitInfo = hasTime
+          const waitInfo = quotaErrorInfo.hasExplicitTime
             ? `until ${formatDuration(quotaErrorInfo.resetAfterMs)}`
             : "until quota resets (estimated 1 hour)";
           currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
@@ -1198,9 +1198,10 @@ Context:
           const errorInfo = SCHEDULER.parseQuotaError(trimmed);
           if (errorInfo) {
             log(`Quota error detected in text: ${errorInfo.errorMessage}`);
-            currentStatus = `Quota exhausted. Pausing task until ${formatDuration(
-              errorInfo.resetAfterMs,
-            )}.`;
+            const waitInfo = errorInfo.hasExplicitTime
+              ? `until ${formatDuration(errorInfo.resetAfterMs)}`
+              : "until quota resets (estimated 1 hour)";
+            currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
             updateDiscordStatus(true);
 
             // Pause the task
@@ -1230,8 +1231,7 @@ Context:
       const errorInfo = SCHEDULER.parseQuotaError(s);
       if (errorInfo) {
         log(`Quota error detected in stderr: ${errorInfo.errorMessage}`);
-        const hasTime = errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
-        const waitInfo = hasTime
+        const waitInfo = errorInfo.hasExplicitTime
           ? `until ${formatDuration(errorInfo.resetAfterMs)}`
           : "until quota resets (estimated 1 hour)";
         currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;

@@ -34,6 +34,7 @@ export function parseQuotaError(errorMessage) {
   // Also handles cases where no time is specified
   const timeMatch = errorMessage.match(/quota will reset after ([0-9]+h)?([0-9]+m)?([0-9]+s)?/i);
   const quotaExhaustedMatch = errorMessage.match(/you have exhausted your capacity|quota exhausted|rate limit exceeded/i);
+  const noCapacityMatch = errorMessage.match(/no capacity available/i);
 
   if (timeMatch) {
     const timeStr = timeMatch[0].replace("quota will reset after ", "");
@@ -42,16 +43,18 @@ export function parseQuotaError(errorMessage) {
       type: "quota_exhausted",
       resetAfterMs: ms,
       errorMessage,
+      hasExplicitTime: true,
     };
   }
 
   // If we found a quota exhaustion error but no time is specified, use a default
-  if (quotaExhaustedMatch) {
+  if (quotaExhaustedMatch || noCapacityMatch) {
     // Default to 1 hour (3600000 ms) when no reset time is specified
     return {
       type: "quota_exhausted",
       resetAfterMs: 3600000, // 1 hour default
       errorMessage,
+      hasExplicitTime: false,
     };
   }
 
@@ -60,23 +63,27 @@ export function parseQuotaError(errorMessage) {
 
 // Check if an error message is a quota error
 export function isQuotaError(output) {
+  if (typeof output !== "string") return false;
+  const lower = output.toLowerCase();
+  
   // Must have 429 status code and be an actual error message
   // This is more specific to avoid false positives from text about quota handling
-  const has429 = output.includes("429");
-  const hasCapacityError = output.includes("exhausted your capacity");
-  const hasQuotaReset = output.includes("quota will reset") || output.includes("Quota exhausted") || output.includes("quota limit reached");
-  const hasRateLimit = output.includes("rate limit exceeded");
+  const has429 = lower.includes("429");
+  const hasCapacityError = lower.includes("exhausted your capacity");
+  const hasNoCapacity = lower.includes("no capacity available");
+  const hasQuotaReset = lower.includes("quota will reset") || lower.includes("quota exhausted") || lower.includes("quota limit reached");
+  const hasRateLimit = lower.includes("rate limit exceeded");
   
   // Check if it's likely an actual error (has 429 AND one of the error messages)
-  if (has429 && (hasCapacityError || hasQuotaReset || hasRateLimit)) {
+  if (has429 && (hasCapacityError || hasNoCapacity || hasQuotaReset || hasRateLimit)) {
     return true;
   }
   
   // Also match common quota error patterns without 429 (some APIs return different codes)
   const hasClearQuotaError = (
-    (hasCapacityError || hasQuotaReset) && 
-    output.includes("error") && 
-    output.includes("capacity")
+    (hasCapacityError || hasQuotaReset || hasNoCapacity) && 
+    lower.includes("error") && 
+    (lower.includes("capacity") || lower.includes("quota"))
   );
   
   return hasClearQuotaError;

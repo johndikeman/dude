@@ -218,12 +218,22 @@ function runTests() {
     const msg = "Cloud Code Assist API error (429): Your quota will reset after 5m0s";
     const result = scheduler.parseQuotaError(msg);
     assert(result.resetAfterMs === 300000);
+    assert(result.hasExplicitTime === true);
+  });
+  test("parses no capacity error with default time", () => {
+    const msg = "Cloud Code Assist API error (429): No capacity available for model gemini-3-flash-preview on the server";
+    const result = scheduler.parseQuotaError(msg);
+    assert(result.resetAfterMs === 3600000);
+    assert(result.hasExplicitTime === false);
   });
 
   // isQuotaError tests
   console.log("\n=== isQuotaError Tests ===");
   test("detects 429 with capacity message", () => {
     assert(scheduler.isQuotaError("429: You have exhausted your capacity") === true);
+  });
+  test("detects 429 with no capacity message", () => {
+    assert(scheduler.isQuotaError("Cloud Code Assist API error (429): No capacity available") === true);
   });
   test("detects 429 with quota message", () => {
     assert(scheduler.isQuotaError("429: quota limit reached") === true);
