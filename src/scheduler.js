@@ -33,7 +33,7 @@ export function parseQuotaError(errorMessage) {
   // Pattern: "Cloud Code Assist API error (429): You have exhausted your capacity on this model. Your quota will reset after 3h50m3s."
   // Also handles cases where no time is specified
   const timeMatch = errorMessage.match(/quota will reset after ([0-9]+h)?([0-9]+m)?([0-9]+s)?/i);
-  const quotaExhaustedMatch = errorMessage.match(/you have exhausted your capacity|quota exhausted|rate limit exceeded/i);
+  const quotaExhaustedMatch = errorMessage.match(/you have exhausted your capacity|quota exhausted|rate limit exceeded|no capacity available/i);
 
   if (timeMatch) {
     const timeStr = timeMatch[0].replace("quota will reset after ", "");
@@ -63,7 +63,7 @@ export function isQuotaError(output) {
   // Must have 429 status code and be an actual error message
   // This is more specific to avoid false positives from text about quota handling
   const has429 = output.includes("429");
-  const hasCapacityError = output.includes("exhausted your capacity");
+  const hasCapacityError = output.includes("exhausted your capacity") || output.includes("No capacity available");
   const hasQuotaReset = output.includes("quota will reset") || output.includes("Quota exhausted") || output.includes("quota limit reached");
   const hasRateLimit = output.includes("rate limit exceeded");
   
