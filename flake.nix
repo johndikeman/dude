@@ -22,11 +22,11 @@
           pkgs = import nixpkgs { inherit system; };
         in
         {
-          packages.default = pkgs.buildNpmPackage.override { nodejs = pkgs.nodejs_20; } {
+          packages.default = pkgs.buildNpmPackage.override { nodejs = pkgs.nodejs_24; } {
             pname = "dude-agent";
             version = "0.1.0";
             src = ./.;
-            npmDepsHash = "sha256-hNPIZ5xR11N+tPOxFQQpas2INuKPzXiLEg8HSZ7cRbU=";
+            npmDepsHash = "sha256-3jMZB08mQcIk/wdgmcbmgjNhhfdlWqQuF4AJl3F8sE8=";
             dontNpmBuild = true;
             postInstall = ''
               cp .opvars $out/.opvars
@@ -45,7 +45,7 @@
 
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              nodejs_20
+              nodejs_24
               git
               gh
               google-cloud-sdk
@@ -115,7 +115,7 @@
                       pkgs.git
                       pkgs.gh
                       pkgs.google-cloud-sdk
-                      pkgs.nodejs_20
+                      pkgs.nodejs_24
                       pkgs._1password-cli
                       pkgs.chromium
                       pkgs.coreutils

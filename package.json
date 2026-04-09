@@ -18,11 +18,11 @@
     "./scheduler": "./src/scheduler.js"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.62.0",
+    "@mariozechner/pi-coding-agent": "^0.66.1",
     "chalk": "^5.6.2",
-    "discord.js": "^14.25.1",
-    "dotenv": "^16.6.1",
+    "discord.js": "^14.26.2",
+    "dotenv": "^17.4.1",
     "strip-ansi": "^7.2.0",
-    "undici": "^7.24.6"
+    "undici": "^8.0.2"
   }
 }
