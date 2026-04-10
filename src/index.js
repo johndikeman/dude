@@ -14,6 +14,7 @@ import { execSync, spawn } from "child_process";
 import stripAnsi from "strip-ansi";
 import * as SCHEDULER from "./scheduler.js";
 import * as SESSIONS from "./sessions.js";
+import * as AUDIT from "./audit.js";
 
 const client = new Client({
   intents: [
@@ -238,11 +239,29 @@ const commands = [
           "The repository (owner/name, defaults to GITHUB_REPO env var)",
         ),
     ),
+  new SlashCommandBuilder()
+    .setName("audit")
+    .setDescription("Manually trigger a self-audit of completed sessions"),
 ];
 
 client.once("ready", async () => {
   log(`Logged in as ${client.user.tag}!`);
   log(`Current working directory: ${config.workDir}`);
+
+  // Mark stale active sessions as failed/interrupted
+  const sessions = SESSIONS.loadSessions();
+  if (sessions.active.length > 0) {
+    log(
+      `Marking ${sessions.active.length} stale active sessions as interrupted.`,
+    );
+    for (const session of sessions.active) {
+      session.status = "interrupted";
+      session.completedAt = Date.now();
+      sessions.completed.push(session);
+    }
+    sessions.active = [];
+    SESSIONS.saveSessions(sessions);
+  }
 
   // Register slash commands
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
@@ -273,6 +292,18 @@ client.once("ready", async () => {
       }
     },
     60 * 60 * 1000,
+  );
+
+  // Self-audit periodically (every 4 hours)
+  setInterval(
+    () => {
+      try {
+        AUDIT.runAudit(MODEL_CODE, MODEL_PROVIDER);
+      } catch (e) {
+        log(`Failed to run self-audit: ${e.message}`);
+      }
+    },
+    4 * 60 * 60 * 1000,
   );
 
   // Initial check for scheduled tasks on startup
@@ -684,6 +715,17 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.reply(`Status update model set to **${model}**.`);
   }
 
+  if (commandName === "audit") {
+    await interaction.deferReply();
+    try {
+      await AUDIT.runAudit(MODEL_CODE, MODEL_PROVIDER);
+      await interaction.editReply("Self-audit completed successfully.");
+    } catch (err) {
+      log(`Error auditing: ${err.message}`);
+      await interaction.editReply(`Audit failed: ${err.message}`);
+    }
+  }
+
   if (commandName === "help") {
     await interaction.reply(
       [
@@ -702,6 +744,7 @@ client.on("interactionCreate", async (interaction) => {
         `/sessions - List active sessions`,
         `/statusinterval <minutes> - Set status update interval`,
         `/statusmodel <model> - Set status update model`,
+        `/audit - Manually trigger self-audit`,
         `/restart - Restart the agent`,
         `/help - Show this message`,
       ].join("\n"),

@@ -106,14 +106,14 @@ export function linkPR(sessionId, prNumber, prRepo) {
   return updateSession(sessionId, { prNumber, prRepo });
 }
 
-// Complete a session
-export function completeSession(sessionId) {
+// Finish a session with a specific status
+export function finishSession(sessionId, status = "completed") {
   const sessions = loadSessions();
   const index = sessions.active.findIndex((s) => s.id === sessionId);
   if (index === -1) return null;
 
   const session = sessions.active.splice(index, 1)[0];
-  session.status = "completed";
+  session.status = status;
   session.completedAt = Date.now();
   sessions.completed.push(session);
 
@@ -126,14 +126,25 @@ export function completeSession(sessionId) {
   return session;
 }
 
+// Complete a session
+export function completeSession(sessionId) {
+  return finishSession(sessionId, "completed");
+}
+
 // Archive old completed sessions
 export function archiveCompletedSessions() {
   const sessions = loadSessions();
   const now = Date.now();
+  const threeDaysAgo = now - 3 * 24 * 60 * 60 * 1000;
   const oneDayAgo = now - 24 * 60 * 60 * 1000;
 
-  // Remove completed sessions older than 24 hours to save space
-  sessions.completed = sessions.completed.filter((s) => s.completedAt > oneDayAgo);
+  // Remove sessions that are either audited AND older than 24h,
+  // OR they are older than 3 days regardless of audit status.
+  sessions.completed = sessions.completed.filter((s) => {
+    if (s.audited && s.completedAt < oneDayAgo) return false;
+    if (s.completedAt < threeDaysAgo) return false;
+    return true;
+  });
   saveSessions(sessions);
 }
 
