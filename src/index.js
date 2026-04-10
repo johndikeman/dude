@@ -1148,7 +1148,7 @@ Context:
 
         // Check for quota errors in JSON events
         let quotaErrorInfo = null;
-        const errorCandidates = [event.errorMessage, event.error].filter(
+        const errorCandidates = [event.errorMessage, event.error, event.finalError].filter(
           (m) => typeof m === "string",
         );
         for (const candidate of errorCandidates) {

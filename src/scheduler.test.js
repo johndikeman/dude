@@ -219,6 +219,13 @@ function runTests() {
     const result = scheduler.parseQuotaError(msg);
     assert(result.resetAfterMs === 300000);
   });
+  test("parses quota error with no reset time specified", () => {
+    const msg = "Cloud Code Assist API error (429): No capacity available for model gemini-3-flash-preview on the server";
+    const result = scheduler.parseQuotaError(msg);
+    assert(result !== null, "Should not be null");
+    assert(result.type === "quota_exhausted");
+    assert(result.resetAfterMs === 3600000); // 1 hour default
+  });
 
   // isQuotaError tests
   console.log("\n=== isQuotaError Tests ===");
@@ -227,6 +234,9 @@ function runTests() {
   });
   test("detects 429 with quota message", () => {
     assert(scheduler.isQuotaError("429: quota limit reached") === true);
+  });
+  test("detects 429 with no capacity available message", () => {
+    assert(scheduler.isQuotaError("Cloud Code Assist API error (429): No capacity available for model gemini-3-flash-preview on the server") === true);
   });
   test("returns false for normal error", () => {
     assert(scheduler.isQuotaError("normal error message") === false);
