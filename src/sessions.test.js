@@ -271,6 +271,7 @@ function runTests() {
   console.log(`  Passed: ${passed}`);
   console.log(`  Failed: ${failed}`);
   cleanup();
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 runTests();

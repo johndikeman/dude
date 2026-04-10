@@ -24,7 +24,7 @@ function removeTaskFromPending(task) {
   const originalContent = content;
   
   // Remove the specific task from pending tasks
-  content = content.replace(new RegExp(`- \\[ \\] ${task.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\n?`, "s"), "");
+  content = content.replace(new RegExp(`- \\[ \\] ${task.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n?`, "s"), "");
   
   // Clean up empty lines and restore the header if needed
   content = content.replace("# Pending Tasks\n\n", "# Pending Tasks\n");
@@ -219,6 +219,21 @@ test("handles task with special characters", () => {
   cleanupTasks();
 });
 
+test("handles task with parentheses", () => {
+  cleanupTasks();
+  const parenContent = `# Pending Tasks
+- [ ] task (with) parentheses
+- [ ] normal task
+`;
+  fs.writeFileSync(TEST_TASKS, parenContent);
+  const result = removeTaskFromPending("task (with) parentheses");
+  assert(result === true);
+  const content = fs.readFileSync(TEST_TASKS, "utf8");
+  assert(content.includes("normal task"));
+  assert(!content.includes("task (with) parentheses"));
+  cleanupTasks();
+});
+
 // Status display tests
 console.log("\n=== Status Display Logic Tests ===");
 
@@ -292,3 +307,5 @@ test("status does not show next task when paused", () => {
 console.log(`\n=== Results ===`);
 console.log(`  Passed: ${passed}`);
 console.log(`  Failed: ${failed}`);
+
+process.exit(failed > 0 ? 1 : 0);

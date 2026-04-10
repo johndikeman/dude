@@ -223,10 +223,10 @@ function runTests() {
   // isQuotaError tests
   console.log("\n=== isQuotaError Tests ===");
   test("detects 429 with capacity message", () => {
-    assert(scheduler.isQuotaError("429: You have exhausted your capacity") === true);
+    assert(scheduler.isQuotaError("Error 429: You have exhausted your capacity") === true);
   });
   test("detects 429 with quota message", () => {
-    assert(scheduler.isQuotaError("429: quota limit reached") === true);
+    assert(scheduler.isQuotaError("Error 429: quota limit reached") === true);
   });
   test("returns false for normal error", () => {
     assert(scheduler.isQuotaError("normal error message") === false);
@@ -346,6 +346,7 @@ function runTests() {
   console.log(`  Passed: ${passed}`);
   console.log(`  Failed: ${failed}`);
   cleanup();
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 runTests();
