@@ -1088,12 +1088,18 @@ Context:
     }
   };
 
+  let stdoutBuffer = "";
+  let stderrBuffer = "";
+
   piProcess.stdout.on("data", (data) => {
     const s = data.toString();
     piOutput += s;
     process.stdout.write(s);
 
-    const lines = s.split("\n");
+    stdoutBuffer += s;
+    const lines = stdoutBuffer.split("\n");
+    stdoutBuffer = lines.pop(); // Keep the partial line for next chunk
+
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -1224,29 +1230,38 @@ Context:
     piError += s;
     process.stderr.write(s);
 
-    // Also check stderr for quota errors
-    if (SCHEDULER.isQuotaError(s) && !quotaErrorHandled) {
-      quotaErrorHandled = true;
-      const errorInfo = SCHEDULER.parseQuotaError(s);
-      if (errorInfo) {
-        log(`Quota error detected in stderr: ${errorInfo.errorMessage}`);
-        const hasTime = errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
-        const waitInfo = hasTime
-          ? `until ${formatDuration(errorInfo.resetAfterMs)}`
-          : "until quota resets (estimated 1 hour)";
-        currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
-        updateDiscordStatus(true);
+    stderrBuffer += s;
+    const lines = stderrBuffer.split("\n");
+    stderrBuffer = lines.pop(); // Keep the partial line for next chunk
 
-        // Pause the task
-        const paused = SCHEDULER.pauseTask(task, errorInfo);
-        pausedTaskId = paused.id;
-        pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo };
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
 
-        // Remove the task from pending tasks in tasks.md to prevent retry
-        removeTaskFromPending(task);
+      // Also check stderr for quota errors
+      if (SCHEDULER.isQuotaError(trimmed) && !quotaErrorHandled) {
+        quotaErrorHandled = true;
+        const errorInfo = SCHEDULER.parseQuotaError(trimmed);
+        if (errorInfo) {
+          log(`Quota error detected in stderr: ${errorInfo.errorMessage}`);
+          const hasTime = errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
+          const waitInfo = hasTime
+            ? `until ${formatDuration(errorInfo.resetAfterMs)}`
+            : "until quota resets (estimated 1 hour)";
+          currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
+          updateDiscordStatus(true);
 
-        // Schedule task as a scheduled task for after quota reset
-        SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
+          // Pause the task
+          const paused = SCHEDULER.pauseTask(task, errorInfo);
+          pausedTaskId = paused.id;
+          pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo };
+
+          // Remove the task from pending tasks in tasks.md to prevent retry
+          removeTaskFromPending(task);
+
+          // Schedule task as a scheduled task for after quota reset
+          SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
+        }
       }
     }
   });
