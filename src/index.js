@@ -50,6 +50,12 @@ let config = {
   lastChannelId: null,
 };
 
+function truncate(str, limit = 2000) {
+  if (!str) return "";
+  if (str.length <= limit) return str;
+  return str.slice(0, limit - 3) + "...";
+}
+
 let isRunning = false;
 let currentRunningTask = null;
 let pausedTaskInfo = null; // Store info about paused tasks for status display
@@ -532,7 +538,7 @@ client.on("interactionCreate", async (interaction) => {
     if (scheduled.length === 0) {
       await interaction.reply("No scheduled tasks.");
     } else {
-      const list = scheduled
+      let list = scheduled
         .map(
           (t) =>
             `**ID:** ${t.id}\n**Task:** ${t.task}\n**Runs at:** ${new Date(
@@ -540,7 +546,12 @@ client.on("interactionCreate", async (interaction) => {
             ).toLocaleString()}\n**Reason:** ${t.reason}`,
         )
         .join("\n\n---\n");
-      await interaction.reply(`**Scheduled Tasks:**\n${list}`);
+
+      let response = `**Scheduled Tasks:**\n${list}`;
+      if (response.length > 2000) {
+        response = response.slice(0, 1990) + "... (truncated)";
+      }
+      await interaction.reply(response);
     }
   }
 
@@ -1055,7 +1066,10 @@ Context:
   });
 
   if (!statusMessage) {
-    const statusContent = `**Current Task:** ${task}\n**Status:** ${currentStatus}`;
+    let statusContent = `**Current Task:** ${task}\n**Status:** ${currentStatus}`;
+    if (statusContent.length > 2000) {
+      statusContent = statusContent.slice(0, 1990) + "... (truncated)";
+    }
     if (interaction) {
       statusMessage = await interaction.followUp({
         content: statusContent,
@@ -1079,9 +1093,11 @@ Context:
     if (force || now - lastStatusUpdate > UPDATE_INTERVAL) {
       lastStatusUpdate = now;
       try {
-        await statusMessage.edit(
-          `**Current Task:** ${task}\n**Status:** ${currentStatus}`,
-        );
+        let statusContent = `**Current Task:** ${task}\n**Status:** ${currentStatus}`;
+        if (statusContent.length > 2000) {
+          statusContent = statusContent.slice(0, 1990) + "... (truncated)";
+        }
+        await statusMessage.edit(statusContent);
       } catch (e) {
         log(`Failed to update Discord status: ${e.message}`);
       }
@@ -1319,8 +1335,8 @@ Context:
       if (interaction) {
         const cleanedOutput = stripAnsi(piOutput.trim());
         const truncatedOutput =
-          cleanedOutput.length > 1500
-            ? "..." + cleanedOutput.slice(-1500)
+          cleanedOutput.length > 1000
+            ? "..." + cleanedOutput.slice(-1000)
             : cleanedOutput;
 
         let response = `Task ${task} was paused due to Google API quota exhaustion. Will resume automatically when quota resets.`;
@@ -1330,19 +1346,23 @@ Context:
           ? schedule.paused.find((t) => t.id === pausedTaskId)
           : null;
         if (pausedTask?.errorInfo?.errorMessage) {
-          const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 500);
-          response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 500 ? "..." : ""}\n\`\`\``;
+          const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 300);
+          response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 300 ? "..." : ""}\n\`\`\``;
         }
 
         if (truncatedOutput) {
           response += `\n\n**Output so far:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
+        }
+
+        if (response.length > 2000) {
+          response = response.slice(0, 1997) + "...";
         }
         interaction.followUp(response);
       } else if (statusMessage) {
         const cleanedOutput = stripAnsi(piOutput.trim());
         const truncatedOutput =
-          cleanedOutput.length > 1500
-            ? "..." + cleanedOutput.slice(-1500)
+          cleanedOutput.length > 1000
+            ? "..." + cleanedOutput.slice(-1000)
             : cleanedOutput;
 
         let response = `Task ${task} was paused due to Google API quota exhaustion. Will resume automatically when quota resets.`;
@@ -1352,12 +1372,16 @@ Context:
           ? schedule.paused.find((t) => t.id === pausedTaskId)
           : null;
         if (pausedTask?.errorInfo?.errorMessage) {
-          const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 500);
-          response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 500 ? "..." : ""}\n\`\`\``;
+          const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 300);
+          response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 300 ? "..." : ""}\n\`\`\``;
         }
 
         if (truncatedOutput) {
           response += `\n\n**Output so far:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
+        }
+
+        if (response.length > 2000) {
+          response = response.slice(0, 1997) + "...";
         }
         statusMessage.reply(response);
       }
