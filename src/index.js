@@ -1179,8 +1179,11 @@ Context:
               for (const line of lines) {
                 const trimmedLine = line.trim();
                 if (trimmedLine.includes("[STATUS]")) {
-                  currentStatus = trimmedLine.split("[STATUS]")[1].trim();
-                  updateDiscordStatus();
+                  const status = trimmedLine.split("[STATUS]")[1].trim();
+                  if (isValidStatus(status)) {
+                    currentStatus = status;
+                    updateDiscordStatus();
+                  }
                 }
               }
             }
@@ -1203,8 +1206,11 @@ Context:
               for (const line of lines) {
                 const trimmedLine = line.trim();
                 if (trimmedLine.includes("[STATUS]")) {
-                  currentStatus = trimmedLine.split("[STATUS]")[1].trim();
-                  updateDiscordStatus();
+                  const status = trimmedLine.split("[STATUS]")[1].trim();
+                  if (isValidStatus(status)) {
+                    currentStatus = status;
+                    updateDiscordStatus();
+                  }
                 }
               }
             }
@@ -1253,8 +1259,11 @@ Context:
         // Not valid JSON, treat as plain text
         // Look for [STATUS] in plain text lines
         if (trimmed.includes("[STATUS]")) {
-          currentStatus = trimmed.split("[STATUS]")[1].trim();
-          updateDiscordStatus();
+          const status = trimmed.split("[STATUS]")[1].trim();
+          if (isValidStatus(status)) {
+            currentStatus = status;
+            updateDiscordStatus();
+          }
         }
 
         // Check for quota errors in plain text
@@ -1542,12 +1551,42 @@ Only output the status line starting with [STATUS]. Use lowercase writing and a 
       for (const line of lines) {
         if (line.trim().includes("[STATUS]")) {
           const status = line.trim().split("[STATUS]")[1].trim();
-          updateStatus(status);
-          break;
+          // Validate status: should be lowercase and not instructional text
+          if (isValidStatus(status)) {
+            updateStatus(status);
+            break;
+          }
         }
       }
     } else {
       log(`Status summarizer failed with code ${code}`);
     }
   });
+}
+
+// Helper function to validate status messages
+// Returns true if the status looks like a legitimate progress update
+// (starts with lowercase, not instructional text from prompt)
+function isValidStatus(status) {
+  if (!status || status.length < 3) return false;
+  
+  // Status should start with lowercase letter (as per instructions)
+  if (!/^[a-z]/.test(status)) return false;
+  
+  // Avoid instructional text from the prompt
+  const instructionalPatterns = [
+    /^report your status/i,
+    /^printing a line/i,
+    /^starting with/i,
+    /^use lowercase/i,
+    /^the summary should/i,
+    /^only output/i,
+    /^provide a concise/i
+  ];
+  
+  for (const pattern of instructionalPatterns) {
+    if (pattern.test(status)) return false;
+  }
+  
+  return true;
 }

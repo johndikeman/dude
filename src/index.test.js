@@ -304,6 +304,81 @@ test("status does not show next task when paused", () => {
   assert(!status.includes("Next Task:"));
 });
 
+// isValidStatus validation tests
+console.log("\n=== isValidStatus Validation Tests ===");
+
+function isValidStatus(status) {
+  if (!status || status.length < 3) return false;
+  
+  // Status should start with lowercase letter (as per instructions)
+  if (!/^[a-z]/.test(status)) return false;
+  
+  // Avoid instructional text from the prompt
+  const instructionalPatterns = [
+    /^report your status/i,
+    /^printing a line/i,
+    /^starting with/i,
+    /^use lowercase/i,
+    /^the summary should/i,
+    /^only output/i,
+    /^provide a concise/i
+  ];
+  
+  for (const pattern of instructionalPatterns) {
+    if (pattern.test(status)) return false;
+  }
+  
+  return true;
+}
+
+test("accepts valid status messages starting with lowercase", () => {
+  assert(isValidStatus("running task"));
+  assert(isValidStatus("implementing feature x"));
+  assert(isValidStatus("completed setup"));
+  assert(isValidStatus("looking for files"));
+});
+
+test("rejects empty or too short status", () => {
+  assert(!isValidStatus(""));
+  assert(!isValidStatus("a"));
+  assert(!isValidStatus("ab"));
+  assert(!isValidStatus(null));
+  assert(!isValidStatus(undefined));
+});
+
+test("rejects status starting with uppercase", () => {
+  assert(!isValidStatus("Running task"));
+  assert(!isValidStatus("Implementing feature"));
+  assert(!isValidStatus("STATUS: something"));
+});
+
+test("rejects instructional text that echoes the prompt", () => {
+  assert(!isValidStatus("report your status by printing a line"));
+  assert(!isValidStatus("printing a line starting with"));
+  assert(!isValidStatus("starting with [STATUS]"));
+  assert(!isValidStatus("use lowercase writing"));
+  assert(!isValidStatus("the summary should be concise"));
+  assert(!isValidStatus("only output the status line"));
+  assert(!isValidStatus("provide a concise one-sentence"));
+});
+
+test("rejects status with instructional patterns at the start", () => {
+  // These should be rejected because they start with known instructional phrases
+  assert(!isValidStatus("report your status by printing"));
+  assert(!isValidStatus("printing a line starting with"));
+  // Note: "need to report your status" is valid because it doesn't START with the pattern
+  // and "need to..." is a reasonable status update format
+  assert(isValidStatus("need to check files"));
+});
+
+test("accepts reasonable progress updates", () => {
+  assert(isValidStatus("working on task x"));
+  assert(isValidStatus("configuring the agent"));
+  assert(isValidStatus("checking file contents"));
+  assert(isValidStatus("fixing the bug"));
+  assert(isValidStatus("waiting for user input"));
+});
+
 console.log(`\n=== Results ===`);
 console.log(`  Passed: ${passed}`);
 console.log(`  Failed: ${failed}`);
