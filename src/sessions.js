@@ -48,6 +48,9 @@ export function createSession(task, options = {}) {
     prRepo: options.prRepo || null,
     workspacePath: options.workspacePath || process.cwd(),
     prompt: options.prompt || null,
+    fallbackRetryContext: options.fallbackRetryContext || null,
+    lastModel: options.lastModel || null,
+    originalFailureReason: options.originalFailureReason || null,
   };
 
   sessions.active.push(session);

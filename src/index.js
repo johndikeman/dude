@@ -32,8 +32,12 @@ const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 const LOG_FILE = path.join(CONFIG_DIR, "agent.log");
 const REPO_BRIEF_FILE = path.join(process.cwd(), "REPO_BRIEF.md");
 
-let MODEL_CODE = "gemini-3-flash-preview";
-let MODEL_PROVIDER = "google-gemini-cli";
+// Model configuration - loaded from config file
+let MODEL_CODE = null;
+let MODEL_PROVIDER = null;
+let FALLBACK_MODEL_CODE = null;
+let FALLBACK_MODEL_PROVIDER = null;
+let USE_FALLBACK_ON_QUOTA_ERROR = false;
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -49,6 +53,11 @@ let config = {
   statusUpdateInterval: 120000, // 2 minutes in ms
   statusUpdateModel: "gemini-2.0-flash",
   lastChannelId: null,
+  modelCode: "gemini-3-flash-preview", // default model
+  modelProvider: "google-gemini-cli",
+  fallbackModelCode: null, // optional fallback model for quota errors
+  fallbackModelProvider: null,
+  useFallbackOnQuotaError: false, // flag to enable fallback on quota errors
 };
 
 function truncate(str, limit = 2000) {
@@ -70,7 +79,45 @@ if (fs.existsSync(CONFIG_FILE)) {
   }
 }
 
+// Initialize model settings from config
+function initializeModelSettings() {
+  MODEL_CODE = config.modelCode || "gemini-3-flash-preview";
+  MODEL_PROVIDER = config.modelProvider || "google-gemini-cli";
+  FALLBACK_MODEL_CODE = config.fallbackModelCode || null;
+  FALLBACK_MODEL_PROVIDER = config.fallbackModelProvider || null;
+  USE_FALLBACK_ON_QUOTA_ERROR = config.useFallbackOnQuotaError || false;
+  
+  // Determine fallback provider if not explicitly set
+  if (FALLBACK_MODEL_CODE && !FALLBACK_MODEL_PROVIDER) {
+    if (FALLBACK_MODEL_CODE === "qwen3.5:122b") {
+      FALLBACK_MODEL_PROVIDER = "verda";
+    } else {
+      FALLBACK_MODEL_PROVIDER = "google-gemini-cli";
+    }
+  }
+  
+  // Determine main provider if not explicitly set
+  if (!MODEL_PROVIDER) {
+    if (MODEL_CODE === "qwen3.5:122b") {
+      MODEL_PROVIDER = "verda";
+    } else {
+      MODEL_PROVIDER = "google-gemini-cli";
+    }
+  }
+  
+  log(`Initialized model: ${MODEL_CODE} (${MODEL_PROVIDER})`);
+  if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
+    log(`Fallback model enabled: ${FALLBACK_MODEL_CODE} (${FALLBACK_MODEL_PROVIDER})`);
+  }
+}
+
 function saveConfig() {
+  // Update global model settings from config before saving
+  config.modelCode = MODEL_CODE;
+  config.modelProvider = MODEL_PROVIDER;
+  config.fallbackModelCode = FALLBACK_MODEL_CODE;
+  config.fallbackModelProvider = FALLBACK_MODEL_PROVIDER;
+  config.useFallbackOnQuotaError = USE_FALLBACK_ON_QUOTA_ERROR;
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
@@ -208,6 +255,25 @@ const commands = [
         .setDescription("Model code (e.g., gemini-2.0-flash)")
         .setRequired(true),
     ),
+  new SlashCommandBuilder()
+    .setName("fallbackmodel")
+    .setDescription("Set the fallback model used when quota errors are hit")
+    .addStringOption((option) =>
+      option
+        .setName("model")
+        .setDescription("Fallback model code (e.g., gemini-2.5-pro, qwen3.5:122b)")
+        .setRequired(true),
+    ),
+  new SlashCommandBuilder()
+    .setName("fallbackenabled")
+    .setDescription("Toggle fallback model on quota errors")
+    .addStringOption((option) =>
+      option
+        .setName("enabled")
+        .setDescription("Enable or disable fallback (true/false)")
+        .setRequired(true)
+        .addChoices({ name: "enabled", value: "true" }, { name: "disabled", value: "false" }),
+    ),
   new SlashCommandBuilder().setName("help").setDescription("Show help message"),
   new SlashCommandBuilder()
     .setName("modelcode")
@@ -253,6 +319,9 @@ const commands = [
 client.once("ready", async () => {
   log(`Logged in as ${client.user.tag}!`);
   log(`Current working directory: ${config.workDir}`);
+
+  // Initialize model settings from config
+  initializeModelSettings();
 
   // Mark stale active sessions as failed/interrupted
   const sessions = SESSIONS.loadSessions();
@@ -411,9 +480,12 @@ client.on("interactionCreate", async (interaction) => {
     const statusLines = [
       `**Status Report**`,
       `Working Directory: \`${config.workDir}\``,
-      `Model: ${MODEL_CODE}`,
+      `Model: ${MODEL_CODE} (${MODEL_PROVIDER})`,
       `Auto-Next: ${config.autoNext ? "**ON**" : "OFF"}`,
     ];
+    if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
+      statusLines.push(`Fallback Model: ${FALLBACK_MODEL_CODE} (${FALLBACK_MODEL_PROVIDER})`);
+    }
 
     if (isRunning && currentRunningTask) {
       statusLines.push(`Agent: **RUNNING**`);
@@ -462,13 +534,18 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "modelcode") {
     const newCode = options.getString("code");
+    // Determine provider based on model code
     if (newCode === "qwen3.5:122b") {
       MODEL_PROVIDER = "verda";
     } else {
       MODEL_PROVIDER = "google-gemini-cli";
     }
     MODEL_CODE = newCode;
-    await interaction.reply(`model updated to ${MODEL_CODE}`);
+    // Update config to persist the change
+    config.modelCode = MODEL_CODE;
+    config.modelProvider = MODEL_PROVIDER;
+    saveConfig();
+    await interaction.reply(`model updated to ${MODEL_CODE} (${MODEL_PROVIDER})`);
   }
 
   if (commandName === "autonext") {
@@ -726,6 +803,33 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.reply(`Status update model set to **${model}**.`);
   }
 
+  if (commandName === "fallbackmodel") {
+    const newCode = options.getString("model");
+    // Determine provider based on model code
+    if (newCode === "qwen3.5:122b") {
+      FALLBACK_MODEL_PROVIDER = "verda";
+    } else {
+      FALLBACK_MODEL_PROVIDER = "google-gemini-cli";
+    }
+    FALLBACK_MODEL_CODE = newCode;
+    config.fallbackModelCode = FALLBACK_MODEL_CODE;
+    config.fallbackModelProvider = FALLBACK_MODEL_PROVIDER;
+    saveConfig();
+    await interaction.reply(`Fallback model set to **${FALLBACK_MODEL_CODE}** (${FALLBACK_MODEL_PROVIDER}). Enable with /fallbackenabled.`);
+  }
+  
+  if (commandName === "fallbackenabled") {
+    const enabled = options.getString("enabled");
+    USE_FALLBACK_ON_QUOTA_ERROR = enabled === "true";
+    config.useFallbackOnQuotaError = USE_FALLBACK_ON_QUOTA_ERROR;
+    saveConfig();
+    if (USE_FALLBACK_ON_QUOTA_ERROR && !FALLBACK_MODEL_CODE) {
+      await interaction.reply(`Fallback enabled **${USE_FALLBACK_ON_QUOTA_ERROR}** but no fallback model is configured. Use /fallbackmodel to set one.`);
+    } else {
+      await interaction.reply(`Fallback on quota errors is now **${USE_FALLBACK_ON_QUOTA_ERROR}**. Currently using: ${FALLBACK_MODEL_CODE || "none"}.`);
+    }
+  }
+
   if (commandName === "audit") {
     await interaction.deferReply();
     try {
@@ -755,6 +859,8 @@ client.on("interactionCreate", async (interaction) => {
         `/sessions - List active sessions`,
         `/statusinterval <minutes> - Set status update interval`,
         `/statusmodel <model> - Set status update model`,
+        `/fallbackmodel <model> - Set fallback model for quota errors`,
+        `/fallbackenabled <true|false> - Enable/disable fallback on quota errors`,
         `/audit - Manually trigger self-audit`,
         `/restart - Restart the agent`,
         `/help - Show this message`,
@@ -980,9 +1086,32 @@ async function runCycle(interaction, initialStatusMessage = null) {
   }
 
   isRunning = true;
-  const task = tasks[0];
+  let task = tasks[0];
   currentRunningTask = task;
   log(`Working on task: ${task}`);
+  
+  // Check if this is a fallback retry task
+  let isFallbackRetry = false;
+  let originalTask = task;
+  let previousError = "";
+  if (task.startsWith("[FALLBACK_RETRY]")) {
+    isFallbackRetry = true;
+    // Extract original task and error
+    const match = task.match(/\[FALLBACK_RETRY\]\s*Original:\s*(.+?)\s*Previous error:\s*(.+)/s);
+    if (match) {
+      originalTask = match[1].trim();
+      previousError = match[2].trim();
+      task = originalTask;
+    }
+    log(`Fallback retry enabled. Using fallback model: ${FALLBACK_MODEL_CODE}`);
+  }
+  
+  // Switch to fallback model if this is a retry task
+  if (isFallbackRetry && USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
+    MODEL_CODE = FALLBACK_MODEL_CODE;
+    MODEL_PROVIDER = FALLBACK_MODEL_PROVIDER || "google-gemini-cli";
+    log(`Switched to fallback model: ${MODEL_CODE} (${MODEL_PROVIDER})`);
+  }
 
   const apiKey = await getGeminiApiKey();
   if (!apiKey) {
@@ -1031,17 +1160,72 @@ Context:
   let quotaErrorHandled = false;
 
   // Create a session for this task run
+  let previousSessionId = null;
+  
   try {
-    const session = SESSIONS.createSession(task, {
+    const sessionOptions = {
       discordMessageId: statusMessage ? statusMessage.id : null,
       discordChannelId: statusMessage ? statusMessage.channelId : null,
       workspacePath: config.workDir,
       prompt: prompt.substring(0, 2000), // Store prompt snippet
-    });
-    currentSessionId = session.id;
-    log(`Created session ${currentSessionId} for task: ${task}`);
+    };
+    
+    if (isFallbackRetry) {
+      // For fallback retry, find the most recent active session to continue from
+      const sessions = SESSIONS.loadSessions();
+      const activeSessions = sessions.active.sort((a, b) => b.createdAt - a.createdAt);
+      
+      if (activeSessions.length > 0) {
+        const prevSession = activeSessions[0];
+        previousSessionId = prevSession.id;
+        log(`Continuing from previous session: ${previousSessionId}`);
+        
+        // Build the prompt to resume with context from previous run
+        const continuePrompt = `RESUME MODE: This is a continuation of a previous session that was interrupted due to a quota error. 
+
+Previous error was: ${previousError}
+
+Continuing the task: ${task}
+
+${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
+        sessionOptions.prompt = continuePrompt.substring(0, 2000);
+        
+        sessionOptions.lastModel = MODEL_CODE;
+        sessionOptions.lastModelError = previousError;
+        sessionOptions.fallbackRetryContext = {
+          originalTask,
+          previousModelError: previousError,
+          fallbackModelUsed: MODEL_CODE,
+        };
+        
+        // Update the existing session
+        SESSIONS.updateSession(previousSessionId, {
+          lastModel: MODEL_CODE,
+          originalFailureReason: previousError,
+          lastRetryAt: Date.now(),
+        });
+      } else {
+        // No previous session found, create new session but track that we should have continued
+        sessionOptions.fallbackRetryContext = {
+          originalTask,
+          previousModelError: previousError,
+          fallbackModelUsed: MODEL_CODE,
+          noPreviousSession: true,
+        };
+      }
+    }
+    
+    // Only create new session if we're not continuing from a previous one
+    if (!isFallbackRetry || !previousSessionId) {
+      const session = SESSIONS.createSession(task, sessionOptions);
+      currentSessionId = session.id;
+      log(`Created session ${currentSessionId} for task: ${task}${isFallbackRetry ? ' (fallback retry, no previous session)' : ''}`);
+    } else {
+      currentSessionId = previousSessionId;
+      log(`Continuing session ${currentSessionId} for fallback retry: ${task}`);
+    }
   } catch (e) {
-    log(`Failed to create session: ${e.message}`);
+    log(`Failed to manage session: ${e.message}`);
   }
 
   const sessionFilePath = path.join(
@@ -1226,28 +1410,67 @@ Context:
         if (quotaErrorInfo && !quotaErrorHandled) {
           quotaErrorHandled = true;
           log(`Quota error detected in JSON: ${quotaErrorInfo.errorMessage}`);
-          const hasTime =
-            quotaErrorInfo.resetAfterMs && quotaErrorInfo.resetAfterMs > 0;
-          const waitInfo = hasTime
-            ? `until ${formatDuration(quotaErrorInfo.resetAfterMs)}`
-            : "until quota resets (estimated 1 hour)";
-          currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
+          
+          if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
+            // Use fallback model - restart the session with new model
+            log(`Switching to fallback model: ${FALLBACK_MODEL_CODE}`);
+            currentStatus = `Quota exhausted. Switching to fallback model ${FALLBACK_MODEL_CODE} to continue...`;
+            updateDiscordStatus(true);
+            
+            // Kill current pi process
+            piProcess.kill("SIGINT");
+            
+            // Update the session to use the fallback model (stored in session file)
+            // The session file will persist the model info for continuation
+            try {
+              SESSIONS.updateSession(currentSessionId, {
+                lastModel: MODEL_CODE,
+                fallbackModelUsed: FALLBACK_MODEL_CODE,
+                lastModelError: quotaErrorInfo.errorMessage,
+              });
+              log(`Session updated with fallback info for resume: ${currentSessionId}`);
+            } catch (e) {
+              log(`Failed to update session with fallback info: ${e.message}`);
+            }
+            
+            // Stop current cycle and re-queue the task for retry with fallback model
+            if (statusUpdateInterval) clearInterval(statusUpdateInterval);
+            isRunning = false;
+            currentRunningTask = null;
+            pausedTaskInfo = null;
+            
+            // Add the task back to the queue (will pick up with fallback model on retry)
+            addTask(`[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${quotaErrorInfo.errorMessage}`);
+            
+            // Clear the current model tracking for this cycle
+            quotaErrorHandled = true;
+            updateDiscordStatus(true);
+            return; // exit this handler
+          } else {
+            // Original behavior - pause the task
+            const hasTime =
+              quotaErrorInfo.resetAfterMs && quotaErrorInfo.resetAfterMs > 0;
+            const waitInfo = hasTime
+              ? `until ${formatDuration(quotaErrorInfo.resetAfterMs)}`
+              : "until quota resets (estimated 1 hour)";
+            currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
 
-          // Pause the task
-          const paused = SCHEDULER.pauseTask(task, quotaErrorInfo);
-          pausedTaskId = paused.id;
-          pausedTaskInfo = {
-            task,
-            resumeAt: paused.resumeAt,
-            errorInfo: quotaErrorInfo,
-          };
+            // Pause the task
+            const paused = SCHEDULER.pauseTask(task, quotaErrorInfo);
+            pausedTaskId = paused.id;
+            pausedTaskInfo = {
+              task,
+              resumeAt: paused.resumeAt,
+              errorInfo: quotaErrorInfo,
+            };
 
-          // Remove the task from pending tasks in tasks.md to prevent retry
-          removeTaskFromPending(task);
+            // Remove the task from pending tasks in tasks.md to prevent retry
+            removeTaskFromPending(task);
 
-          // Schedule task as a scheduled task for after quota reset
-          SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
-          updateDiscordStatus(true);
+            // Schedule task as a scheduled task for after quota reset
+            SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
+            updateDiscordStatus(true);
+          }
         }
       } catch (e) {
         // Not valid JSON, treat as plain text
@@ -1263,21 +1486,43 @@ Context:
           const errorInfo = SCHEDULER.parseQuotaError(trimmed);
           if (errorInfo) {
             log(`Quota error detected in text: ${errorInfo.errorMessage}`);
-            currentStatus = `Quota exhausted. Pausing task until ${formatDuration(
-              errorInfo.resetAfterMs,
-            )}.`;
-            updateDiscordStatus(true);
+            
+            if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
+              // Use fallback model - restart the session with new model
+              log(`Switching to fallback model: ${FALLBACK_MODEL_CODE}`);
+              currentStatus = `Quota exhausted. Switching to fallback model ${FALLBACK_MODEL_CODE} to continue...`;
+              updateDiscordStatus(true);
+              
+              // Stop this cycle and re-queue the task for retry
+              if (statusUpdateInterval) clearInterval(statusUpdateInterval);
+              isRunning = false;
+              currentRunningTask = null;
+              pausedTaskInfo = null;
+              
+              // Add the task back to the queue (will pick up with fallback model on retry)
+              addTask(`[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${errorInfo.errorMessage}`);
+              
+              // Clear the handler
+              quotaErrorHandled = true;
+              updateDiscordStatus(true);
+            } else {
+              // Original behavior - pause the task
+              currentStatus = `Quota exhausted. Pausing task until ${formatDuration(
+                errorInfo.resetAfterMs,
+              )}.`;
+              updateDiscordStatus(true);
 
-            // Pause the task
-            const paused = SCHEDULER.pauseTask(task, errorInfo);
-            pausedTaskId = paused.id;
-            pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo };
+              // Pause the task
+              const paused = SCHEDULER.pauseTask(task, errorInfo);
+              pausedTaskId = paused.id;
+              pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo };
 
-            // Remove the task from pending tasks in tasks.md to prevent retry
-            removeTaskFromPending(task);
+              // Remove the task from pending tasks in tasks.md to prevent retry
+              removeTaskFromPending(task);
 
-            // Schedule task as a scheduled task for after quota reset
-            SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
+              // Schedule task as a scheduled task for after quota reset
+              SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
+            }
           }
         }
       }
@@ -1303,23 +1548,45 @@ Context:
         const errorInfo = SCHEDULER.parseQuotaError(trimmed);
         if (errorInfo) {
           log(`Quota error detected in stderr: ${errorInfo.errorMessage}`);
-          const hasTime = errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
-          const waitInfo = hasTime
-            ? `until ${formatDuration(errorInfo.resetAfterMs)}`
-            : "until quota resets (estimated 1 hour)";
-          currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
-          updateDiscordStatus(true);
+          
+          if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
+            // Use fallback model - restart the session with new model
+            log(`Switching to fallback model: ${FALLBACK_MODEL_CODE}`);
+            currentStatus = `Quota exhausted. Switching to fallback model ${FALLBACK_MODEL_CODE} to continue...`;
+            updateDiscordStatus(true);
+            
+            // Stop this cycle and re-queue the task for retry
+            if (statusUpdateInterval) clearInterval(statusUpdateInterval);
+            isRunning = false;
+            currentRunningTask = null;
+            pausedTaskInfo = null;
+            
+            // Add the task back to the queue (will pick up with fallback model on retry)
+            addTask(`[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${errorInfo.errorMessage}`);
+            
+            // Clear the handler
+            quotaErrorHandled = true;
+            updateDiscordStatus(true);
+          } else {
+            // Original behavior - pause the task
+            const hasTime = errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
+            const waitInfo = hasTime
+              ? `until ${formatDuration(errorInfo.resetAfterMs)}`
+              : "until quota resets (estimated 1 hour)";
+            currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
+            updateDiscordStatus(true);
 
-          // Pause the task
-          const paused = SCHEDULER.pauseTask(task, errorInfo);
-          pausedTaskId = paused.id;
-          pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo };
+            // Pause the task
+            const paused = SCHEDULER.pauseTask(task, errorInfo);
+            pausedTaskId = paused.id;
+            pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo };
 
-          // Remove the task from pending tasks in tasks.md to prevent retry
-          removeTaskFromPending(task);
+            // Remove the task from pending tasks in tasks.md to prevent retry
+            removeTaskFromPending(task);
 
-          // Schedule task as a scheduled task for after quota reset
-          SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
+            // Schedule task as a scheduled task for after quota reset
+            SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
+          }
         }
       }
     }
