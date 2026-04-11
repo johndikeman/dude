@@ -32,34 +32,17 @@ const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 const LOG_FILE = path.join(CONFIG_DIR, "agent.log");
 const REPO_BRIEF_FILE = path.join(process.cwd(), "REPO_BRIEF.md");
 
-let MODEL_CODE = "gemini-3-flash-preview";
-let MODEL_PROVIDER = "google-gemini-cli";
-
-function log(msg) {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  console.log(line);
-  try {
-    fs.appendFileSync(LOG_FILE, line + "\n");
-  } catch (e) {}
-}
-
 let config = {
   workDir: process.cwd(),
   autoNext: false,
   statusUpdateInterval: 120000, // 2 minutes in ms
   statusUpdateModel: "gemini-2.0-flash",
   lastChannelId: null,
+  modelCode: "gemini-3-flash-preview",
+  modelProvider: "google-gemini-cli",
+  fallbackModelCode: "gemini-2.0-flash",
+  useFallback: false,
 };
-
-function truncate(str, limit = 2000) {
-  if (!str) return "";
-  if (str.length <= limit) return str;
-  return str.slice(0, limit - 3) + "...";
-}
-
-let isRunning = false;
-let currentRunningTask = null;
-let pausedTaskInfo = null; // Store info about paused tasks for status display
 
 if (fs.existsSync(CONFIG_FILE)) {
   try {
@@ -70,8 +53,16 @@ if (fs.existsSync(CONFIG_FILE)) {
   }
 }
 
+let MODEL_CODE = config.modelCode;
+let MODEL_PROVIDER = config.modelProvider;
+
 function saveConfig() {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+}
+
+function getProviderForModel(modelCode) {
+  if (modelCode === "qwen3.5:122b") return "verda";
+  return "google-gemini-cli";
 }
 
 // Slash Command Definitions
@@ -216,13 +207,23 @@ const commands = [
       option
         .setName("code")
         .setDescription("the model code")
-        .setRequired(true)
-        .addChoices(
-          { name: "gemini-3-flash-preview", value: "gemini-3-flash-preview" },
-          { name: "gemini-3-pro-preview", value: "gemini-3-pro-preview" },
-          { name: "qwen3.5:122b", value: "qwen3.5:122b" },
-          { name: "gemini-2.5-pro", value: "gemini-2.5-pro" },
-        ),
+        .setRequired(true),
+    ),
+  new SlashCommandBuilder()
+    .setName("fallback")
+    .setDescription("configure fallback model for quota errors")
+    .addStringOption((option) =>
+      option
+        .setName("code")
+        .setDescription("the fallback model code")
+        .setRequired(false),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("mode")
+        .setDescription("enable or disable fallback")
+        .setRequired(false)
+        .addChoices({ name: "on", value: "on" }, { name: "off", value: "off" }),
     ),
   new SlashCommandBuilder()
     .setName("sessions")
@@ -412,6 +413,7 @@ client.on("interactionCreate", async (interaction) => {
       `**Status Report**`,
       `Working Directory: \`${config.workDir}\``,
       `Model: ${MODEL_CODE}`,
+      `Fallback: ${config.useFallback ? `**ON** (${config.fallbackModelCode})` : "OFF"}`,
       `Auto-Next: ${config.autoNext ? "**ON**" : "OFF"}`,
     ];
 
@@ -462,13 +464,28 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "modelcode") {
     const newCode = options.getString("code");
-    if (newCode === "qwen3.5:122b") {
-      MODEL_PROVIDER = "verda";
-    } else {
-      MODEL_PROVIDER = "google-gemini-cli";
-    }
+    config.modelProvider = getProviderForModel(newCode);
+    config.modelCode = newCode;
     MODEL_CODE = newCode;
+    MODEL_PROVIDER = config.modelProvider;
+    saveConfig();
     await interaction.reply(`model updated to ${MODEL_CODE}`);
+  }
+
+  if (commandName === "fallback") {
+    const code = options.getString("code");
+    const mode = options.getString("mode");
+
+    if (code) {
+      config.fallbackModelCode = code;
+    }
+    if (mode) {
+      config.useFallback = mode === "on";
+    }
+    saveConfig();
+    await interaction.reply(
+      `Fallback configuration updated: Model = ${config.fallbackModelCode}, Status = ${config.useFallback ? "ON" : "OFF"}`,
+    );
   }
 
   if (commandName === "autonext") {
@@ -967,7 +984,7 @@ async function getGeminiApiKey() {
   }
 }
 
-async function runCycle(interaction, initialStatusMessage = null) {
+async function runCycle(interaction, initialStatusMessage = null, overrideModel = null) {
   if (isRunning) {
     if (interaction) interaction.followUp("A task is already being processed.");
     return;
@@ -989,8 +1006,12 @@ async function runCycle(interaction, initialStatusMessage = null) {
     const errorMsg = "Could not obtain API key for Gemini.";
     if (interaction) interaction.followUp(errorMsg);
     log(errorMsg);
+    isRunning = false;
     return;
   }
+
+  const currentModel = overrideModel || MODEL_CODE;
+  const currentProvider = getProviderForModel(currentModel);
 
   const repoBrief = fs.existsSync(REPO_BRIEF_FILE)
     ? fs.readFileSync(REPO_BRIEF_FILE, "utf8")
@@ -1029,6 +1050,7 @@ Context:
   let currentStatus = "Starting...";
   let pausedTaskId = null;
   let quotaErrorHandled = false;
+  let shouldFallback = false;
 
   // Create a session for this task run
   try {
@@ -1055,9 +1077,9 @@ Context:
 
   const piArgs = [
     "--provider",
-    MODEL_PROVIDER,
+    currentProvider,
     "--model",
-    MODEL_CODE,
+    currentModel,
     "--mode",
     "json",
     "--session",
@@ -1225,6 +1247,19 @@ Context:
 
         if (quotaErrorInfo && !quotaErrorHandled) {
           quotaErrorHandled = true;
+          if (
+            config.useFallback &&
+            config.fallbackModelCode &&
+            currentModel !== config.fallbackModelCode
+          ) {
+            log(
+              `Quota error hit. Fallback enabled. Switching from ${currentModel} to ${config.fallbackModelCode}`,
+            );
+            shouldFallback = true;
+            piProcess.kill();
+            return;
+          }
+
           log(`Quota error detected in JSON: ${quotaErrorInfo.errorMessage}`);
           const hasTime =
             quotaErrorInfo.resetAfterMs && quotaErrorInfo.resetAfterMs > 0;
@@ -1262,6 +1297,19 @@ Context:
           quotaErrorHandled = true;
           const errorInfo = SCHEDULER.parseQuotaError(trimmed);
           if (errorInfo) {
+            if (
+              config.useFallback &&
+              config.fallbackModelCode &&
+              currentModel !== config.fallbackModelCode
+            ) {
+              log(
+                `Quota error hit. Fallback enabled. Switching from ${currentModel} to ${config.fallbackModelCode}`,
+              );
+              shouldFallback = true;
+              piProcess.kill();
+              return;
+            }
+
             log(`Quota error detected in text: ${errorInfo.errorMessage}`);
             currentStatus = `Quota exhausted. Pausing task until ${formatDuration(
               errorInfo.resetAfterMs,
@@ -1302,6 +1350,19 @@ Context:
         quotaErrorHandled = true;
         const errorInfo = SCHEDULER.parseQuotaError(trimmed);
         if (errorInfo) {
+          if (
+            config.useFallback &&
+            config.fallbackModelCode &&
+            currentModel !== config.fallbackModelCode
+          ) {
+            log(
+              `Quota error hit. Fallback enabled. Switching from ${currentModel} to ${config.fallbackModelCode}`,
+            );
+            shouldFallback = true;
+            piProcess.kill();
+            return;
+          }
+
           log(`Quota error detected in stderr: ${errorInfo.errorMessage}`);
           const hasTime = errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
           const waitInfo = hasTime
@@ -1329,6 +1390,16 @@ Context:
     if (statusUpdateInterval) clearInterval(statusUpdateInterval);
     isRunning = false;
     currentRunningTask = null;
+
+    if (shouldFallback) {
+      log(`Restarting task with fallback model: ${config.fallbackModelCode}`);
+      // Give it a small delay before restarting
+      setTimeout(() => {
+        runCycle(interaction, statusMessage, config.fallbackModelCode);
+      }, 2000);
+      return;
+    }
+
     // Check if this was a quota pause
     const schedule = SCHEDULER.loadSchedule();
     const isQuotaPause =

@@ -8,7 +8,7 @@ import path from "path";
 import * as AUDIT from "./src/audit.js";
 import * as SESSIONS from "./src/sessions.js";
 
-const MODEL_CODE = "gemini-3-flash-preview";
+const MODEL_CODE = "gemini-2.0-flash";
 const MODEL_PROVIDER = "google-gemini-cli";
 
 function log(msg) {
