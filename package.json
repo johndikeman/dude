@@ -9,10 +9,11 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node src/scheduler.test.js && node src/index.test.js && node src/sessions.test.js && node test_audit.js && node test/scheduler-quota-test.js",
+    "test": "node src/scheduler.test.js && node src/sessions.test.js && node src/index.test.js && node src/agent.acceptance.test.js && node test_audit.js && node test/scheduler-quota-test.js",
     "test:scheduler": "node src/scheduler.test.js",
     "test:index": "node src/index.test.js",
     "test:sessions": "node src/sessions.test.js",
+    "test:acceptance": "node src/agent.acceptance.test.js",
     "test:audit": "node test_audit.js",
     "test:quota": "node test/scheduler-quota-test.js"
   },
