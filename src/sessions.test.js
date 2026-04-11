@@ -38,6 +38,7 @@ function createTestSessions() {
         prRepo: options.prRepo || null,
         workspacePath: options.workspacePath || "/test",
         prompt: options.prompt || null,
+        resumedFrom: options.resumedFrom || null,
       };
       sessions.active.push(session);
       createTestSessions().saveSessions(sessions);
@@ -89,6 +90,11 @@ function createTestSessions() {
         id: s.id,
         task: s.task,
         createdAt: new Date(s.createdAt).toLocaleString(),
+        suspendedAt: s.suspendedAt || null,
+        suspensionReason: s.suspensionReason || null,
+        terminatedAt: s.terminatedAt || null,
+        terminationReason: s.terminationReason || null,
+        resumedFrom: s.resumedFrom || null,
       }));
     },
   };
@@ -247,6 +253,57 @@ function runTests() {
     const active = sessions.getActiveSessions();
     assert(active.length === 1);
     assert(active[0].task === "test task");
+    cleanup();
+  });
+
+  // Session suspension tests
+  console.log("\n=== Session Suspension Tests ===");
+  test("suspends a session with timeout info", () => {
+    cleanup();
+    const session = sessions.createSession("test task");
+    const updated = sessions.updateSession("test-session-id", {
+      suspendedAt: Date.now(),
+      suspensionReason: "Turn timeout (no output for 5m)",
+    });
+    assert(updated !== null);
+    assert(updated.suspendedAt !== null);
+    assert(updated.suspensionReason === "Turn timeout (no output for 5m)");
+    cleanup();
+  });
+
+  test("marks session as terminated after timeout", () => {
+    cleanup();
+    sessions.createSession("test task");
+    sessions.updateSession("test-session-id", {
+      suspendedAt: Date.now(),
+      suspensionReason: "Turn timeout",
+      terminatedAt: Date.now(),
+      terminationReason: "turn_timeout",
+    });
+    const session = sessions.getSession("test-session-id");
+    assert(session !== null);
+    assert(session.terminationReason === "turn_timeout");
+    cleanup();
+  });
+
+  test("session can be resumed from", () => {
+    cleanup();
+    const session = sessions.createSession("test task", { resumedFrom: "original-session-id" });
+    assert(session.resumedFrom === "original-session-id");
+    cleanup();
+  });
+
+  test("getActiveSessions shows suspended sessions", () => {
+    cleanup();
+    const session = sessions.createSession("test task");
+    sessions.updateSession("test-session-id", {
+      suspendedAt: Date.now(),
+      suspensionReason: "Turn timeout",
+    });
+    const active = sessions.getActiveSessions();
+    assert(active.length === 1);
+    assert(active[0].suspendedAt !== null);
+    assert(active[0].suspensionReason === "Turn timeout");
     cleanup();
   });
 

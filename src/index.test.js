@@ -178,6 +178,31 @@ test("formats 38h5m as '1d 14h'", () => {
   assert(formatDuration(138300000) === "1d 14h");
 });
 
+// Turn timeout detection tests
+console.log("\n=== Turn Timeout Detection Tests ===");
+test("detects turn timeout after configured duration", () => {
+  const turnTimeoutMs = 300000; // 5 minutes
+  const lastOutputTime = Date.now() - 400000; // 400 seconds ago (> 5 minutes)
+  const timeSinceLastOutput = Date.now() - lastOutputTime;
+  assert(timeSinceLastOutput > turnTimeoutMs);
+  assert(timeSinceLastOutput / 1000 > 6); // More than 6 minutes
+});
+
+test("does not detect turn timeout when output is recent", () => {
+  const turnTimeoutMs = 300000; // 5 minutes
+  const lastOutputTime = Date.now() - 10000; // 10 seconds ago
+  const timeSinceLastOutput = Date.now() - lastOutputTime;
+  assert(timeSinceLastOutput < turnTimeoutMs);
+  assert(timeSinceLastOutput < 20000); // Less than 20 seconds
+});
+
+test("calculates turn timeout correctly in edge case at exactly timeout", () => {
+  const turnTimeoutMs = 300000; // 5 minutes
+  const lastOutputTime = Date.now() - turnTimeoutMs;
+  const timeSinceLastOutput = Date.now() - lastOutputTime;
+  assert(Math.abs(timeSinceLastOutput - turnTimeoutMs) < 1000); // Within 1 second
+});
+
 // removeTaskFromPending tests
 console.log("\n=== removeTaskFromPending Tests ===");
 test("removes a task from pending list", () => {

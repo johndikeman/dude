@@ -48,6 +48,7 @@ let config = {
   autoNext: false,
   statusUpdateInterval: 120000, // 2 minutes in ms
   statusUpdateModel: "gemini-2.0-flash",
+  turnTimeoutMs: 300000, // 5 minutes per turn (default)
   lastChannelId: null,
 };
 
@@ -227,6 +228,15 @@ const commands = [
   new SlashCommandBuilder()
     .setName("sessions")
     .setDescription("List active sessions that can be resumed via reply"),
+  new SlashCommandBuilder()
+    .setName("turntimeout")
+    .setDescription("Set the turn timeout in seconds (0 to disable)")
+    .addIntegerOption((option) =>
+      option
+        .setName("seconds")
+        .setDescription("Timeout in seconds (0 to disable, default 300)")
+        .setRequired(true),
+    ),
   new SlashCommandBuilder()
     .setName("linkpr")
     .setDescription(
@@ -674,8 +684,21 @@ client.on("interactionCreate", async (interaction) => {
     } else {
       const list = activeSessions
         .map(
-          (s) =>
-            `[ID: ${s.id}] ${s.task.substring(0, 50)}${s.task.length > 50 ? "..." : ""}\n  Created: ${s.createdAt}${s.discordMessageId ? "\n  Reply to my Discord message to resume" : ""}${s.prNumber ? `\n  Linked to PR #${s.prNumber} (comment /resume to resume)` : ""}`,
+          (s) => {
+            let info = `[ID: ${s.id}] ${s.task.substring(0, 50)}${s.task.length > 50 ? "..." : ""}\n  Created: ${s.createdAt}`;
+            if (s.suspendedAt) {
+              const reason = s.suspensionReason && s.suspensionReason.includes("Turn") 
+                ? "turn timeout" 
+                : s.suspensionReason;
+              info += `\n  **SUSPENDED**: ${reason}`;
+            } else if (s.discordMessageId) {
+              info += "\n  Reply to my Discord message to resume";
+            }
+            if (s.prNumber) {
+              info += `\n  Linked to PR #${s.prNumber} (comment /resume to resume)`;
+            }
+            return info;
+          }
         )
         .join("\n\n");
       let response = `**Active Sessions:**\n\n${list}`;
@@ -726,6 +749,15 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.reply(`Status update model set to **${model}**.`);
   }
 
+  if (commandName === "turntimeout") {
+    const seconds = options.getInteger("seconds");
+    config.turnTimeoutMs = seconds * 1000;
+    saveConfig();
+    await interaction.reply(
+      `Turn timeout set to **${seconds}** seconds${seconds === 0 ? " (disabled)" : ""}.`,
+    );
+  }
+
   if (commandName === "audit") {
     await interaction.deferReply();
     try {
@@ -755,6 +787,7 @@ client.on("interactionCreate", async (interaction) => {
         `/sessions - List active sessions`,
         `/statusinterval <minutes> - Set status update interval`,
         `/statusmodel <model> - Set status update model`,
+        `/turntimeout <seconds> - Set turn timeout (0 to disable)`,
         `/audit - Manually trigger self-audit`,
         `/restart - Restart the agent`,
         `/help - Show this message`,
@@ -1029,6 +1062,22 @@ Context:
   let currentStatus = "Starting...";
   let pausedTaskId = null;
   let quotaErrorHandled = false;
+  let turnTimeoutTriggered = false; // Track if timeout was triggered
+  let lastOutputTime = Date.now(); // Track last meaningful output time
+  let resumedFromSessionId = null; // Track if we're resuming another session
+
+  // Check if this is a resume task for a suspended session
+  const resumeMatch = task.match(/Resume session (\d+)/);
+  if (resumeMatch) {
+    const originalSessionId = resumeMatch[1];
+    const originalSession = SESSIONS.getSession(originalSessionId);
+    if (originalSession && (originalSession.suspendedAt || originalSession.status === "active")) {
+      resumedFromSessionId = originalSessionId;
+      log(`Resuming suspended session ${originalSessionId}`);
+      // Update task context for better continuity
+      task = `${originalSession.task}\n\nContinue from where you left off. Previous context:\n` + task;
+    }
+  }
 
   // Create a session for this task run
   try {
@@ -1037,18 +1086,18 @@ Context:
       discordChannelId: statusMessage ? statusMessage.channelId : null,
       workspacePath: config.workDir,
       prompt: prompt.substring(0, 2000), // Store prompt snippet
+      resumedFrom: resumedFromSessionId,
     });
     currentSessionId = session.id;
-    log(`Created session ${currentSessionId} for task: ${task}`);
+    log(`Created session ${currentSessionId} for task: ${task}${resumedFromSessionId ? ` (resumed from ${resumedFromSessionId})` : ""}`);
   } catch (e) {
     log(`Failed to create session: ${e.message}`);
   }
 
-  const sessionFilePath = path.join(
-    CONFIG_DIR,
-    "sessions",
-    `${currentSessionId || Date.now()}.jsonl`,
-  );
+  // Use the original session file when resuming, otherwise create a new one
+  const sessionFilePath = resumedFromSessionId
+    ? path.join(CONFIG_DIR, "sessions", `${resumedFromSessionId}.jsonl`)
+    : path.join(CONFIG_DIR, "sessions", `${currentSessionId || Date.now()}.jsonl`);
   if (!fs.existsSync(path.dirname(sessionFilePath))) {
     fs.mkdirSync(path.dirname(sessionFilePath), { recursive: true });
   }
@@ -1096,8 +1145,39 @@ Context:
     }, config.statusUpdateInterval);
   }
 
+  // Periodically check for turn timeout
+  const turnTimeoutCheckInterval = setInterval(() => {
+    if (!isRunning || !currentSessionId || turnTimeoutTriggered) return;
+    const now = Date.now();
+    const timeSinceLastOutput = now - lastOutputTime;
+    if (timeSinceLastOutput > config.turnTimeoutMs) {
+      log(
+        `Turn timeout detected! No output for ${formatDuration(timeSinceLastOutput)} (config: ${formatDuration(config.turnTimeoutMs)})`,
+      );
+      turnTimeoutTriggered = true;
+      currentStatus = `Turn timeout after ${formatDuration(config.turnTimeoutMs)}. Suspending session...`;
+      updateDiscordStatus(true);
+
+      // Suspend the session
+      SESSIONS.updateSession(currentSessionId, {
+        suspendedAt: now,
+        suspensionReason: `Turn timeout (no output for ${formatDuration(timeSinceLastOutput)})`,
+      });
+
+      // Create a new task to resume the session
+      const resumeTask = `Resume session ${currentSessionId} that was suspended due to turn timeout. Previous task: ${task}`;
+      addTask(resumeTask);
+
+      // Clear intervals and prepare for session suspension
+      if (statusUpdateInterval) {
+        clearInterval(statusUpdateInterval);
+      }
+    }
+  }, 30000); // Check every 30 seconds
+
   piProcess.on("error", async (err) => {
     if (statusUpdateInterval) clearInterval(statusUpdateInterval);
+    clearInterval(turnTimeoutCheckInterval);
     isRunning = false;
     currentRunningTask = null;
     pausedTaskInfo = null;
@@ -1162,6 +1242,9 @@ Context:
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
+      
+      // Reset turn timeout timer on any meaningful output
+      lastOutputTime = Date.now();
 
       // Try to parse as JSON event (for --mode json)
       try {
@@ -1296,6 +1379,9 @@ Context:
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
+      
+      // Reset turn timeout timer on any meaningful output
+      lastOutputTime = Date.now();
 
       // Also check stderr for quota errors
       if (SCHEDULER.isQuotaError(trimmed) && !quotaErrorHandled) {
@@ -1327,8 +1413,28 @@ Context:
 
   piProcess.on("close", async (code) => {
     if (statusUpdateInterval) clearInterval(statusUpdateInterval);
+    clearInterval(turnTimeoutCheckInterval);
     isRunning = false;
     currentRunningTask = null;
+    
+    // Check if this was a timeout suspension
+    if (turnTimeoutTriggered) {
+      log(`Process ended after turn timeout. Session suspended for resumption.`);
+      // Session was already suspended, just clean up
+      try {
+        if (currentSessionId) {
+          // Keep the session suspended, mark it specially
+          SESSIONS.updateSession(currentSessionId, {
+            terminatedAt: Date.now(),
+            terminationReason: "turn_timeout",
+          });
+        }
+      } catch (e) {
+        log(`Error updating session after timeout: ${e.message}`);
+      }
+      return; // Don't trigger next task, wait for manual resume or autoNext with new task
+    }
+    
     // Check if this was a quota pause
     const schedule = SCHEDULER.loadSchedule();
     const isQuotaPause =

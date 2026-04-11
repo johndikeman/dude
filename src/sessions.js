@@ -48,6 +48,7 @@ export function createSession(task, options = {}) {
     prRepo: options.prRepo || null,
     workspacePath: options.workspacePath || process.cwd(),
     prompt: options.prompt || null,
+    resumedFrom: options.resumedFrom || null,
   };
 
   sessions.active.push(session);
@@ -158,6 +159,10 @@ export function getActiveSessions() {
     discordMessageId: s.discordMessageId,
     prNumber: s.prNumber,
     status: s.status,
+    suspendedAt: s.suspendedAt || null,
+    suspensionReason: s.suspensionReason || null,
+    terminatedAt: s.terminatedAt || null,
+    terminationReason: s.terminationReason || null,
   }));
 }
 
