@@ -37,6 +37,22 @@
             pname = "dude-skills";
             version = "0.1.0";
             src = ./.pi/skills;
+            buildInputs = [ pkgs.nodejs_24 pkgs.coreutils ];
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            phases = [ "unpackPhase" "buildPhase" "installPhase" ];
+            buildPhase = ''
+              # Install npm dependencies for skills that have package.json
+              find $src -maxdepth 2 -name "package.json" -type f | while read pkg; do
+                skill_dir=$(dirname "$pkg")
+                if [ -f "$skill_dir/package-lock.json" ]; then
+                  echo "Installing locked npm dependencies for $skill_dir..."
+                  (cd "$skill_dir" && npm ci --prefer-offline --no-audit --progress=false 2>/dev/null || true)
+                else
+                  echo "Installing npm dependencies for $skill_dir (no lockfile)..."
+                  (cd "$skill_dir" && npm install --prefer-offline --no-audit --progress=false 2>/dev/null || true)
+                fi
+              done
+            '';
             installPhase = ''
               mkdir -p $out/skills
               cp -r * $out/skills/
