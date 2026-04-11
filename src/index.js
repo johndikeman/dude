@@ -514,7 +514,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "start") {
     const response = await interaction.reply({
-      content: "Starting self-improvement cycle...",
+      content: "starting...",
       fetchReply: true,
     });
     runCycle(interaction, response);
