@@ -120,7 +120,7 @@ function isTaskAlreadyScheduled(schedule, task, reason = null) {
 }
 
 // Pause a task due to quota error
-export function pauseTask(task, errorInfo) {
+export function pauseTask(task, errorInfo, sessionInfo = null) {
   const schedule = loadSchedule();
   
   // Check if task is already paused
@@ -138,7 +138,12 @@ export function pauseTask(task, errorInfo) {
     pausedAt: now,
     resumeAt,
     errorInfo,
+    sessionInfo,
   };
+  
+  if (sessionInfo) {
+    log(`Task "${task}" paused with session info: ${sessionInfo.sessionId}`);
+  }
 
   schedule.paused.push(pausedTask);
   saveSchedule(schedule);
@@ -205,6 +210,8 @@ export function listPausedTasks() {
       timeRemaining,
       errorMessage: t.errorInfo?.errorMessage || "Unknown error",
       errorType: t.errorInfo?.type || "unknown",
+      sessionId: t.sessionInfo?.sessionId || null,
+      sessionFile: t.sessionInfo?.sessionFile || null,
     };
   });
 }
@@ -214,6 +221,13 @@ export function getPausedTaskError(taskId) {
   const schedule = loadSchedule();
   const task = schedule.paused.find((t) => t.id === taskId);
   return task?.errorInfo || null;
+}
+
+// Get session info for a specific paused task
+export function getPausedTaskSessionInfo(taskId) {
+  const schedule = loadSchedule();
+  const task = schedule.paused.find((t) => t.id === taskId);
+  return task?.sessionInfo || null;
 }
 
 // Get list of scheduled tasks
@@ -230,6 +244,7 @@ export function listScheduledTasks() {
       runAt: new Date(t.runAt).toLocaleString(),
       timeUntil,
       reason: t.reason,
+      sessionId: t.sessionInfo?.sessionId || null,
     };
   });
 }
@@ -295,8 +310,46 @@ export function resumeSuspendedSession(sessionId) {
   return null;
 }
 
-// Check for suspended sessions that are ready
-export function getReadySuspendedSessions() {
-  const schedule = loadSchedule();
-  return schedule.suspendedSessions || [];
+// Store a session mapping for task resumption
+// This maps task names to session info for continuity
+const SESSION_MAP_FILE = path.join(CONFIG_DIR, 'session-map.json');
+
+export function storeSessionMapping(task, sessionInfo) {
+  let map = {};
+  if (fs.existsSync(SESSION_MAP_FILE)) {
+    try {
+      map = JSON.parse(fs.readFileSync(SESSION_MAP_FILE, 'utf8'));
+    } catch (e) {
+      log(`Error loading session map: ${e.message}`);
+    }
+  }
+  map[task] = sessionInfo;
+  fs.writeFileSync(SESSION_MAP_FILE, JSON.stringify(map, null, 2));
+  log(`Stored session mapping for task: ${task}, session: ${sessionInfo.sessionId}`);
+}
+
+export function getSessionMapping(task) {
+  if (!fs.existsSync(SESSION_MAP_FILE)) {
+    return null;
+  }
+  try {
+    const map = JSON.parse(fs.readFileSync(SESSION_MAP_FILE, 'utf8'));
+    return map[task] || null;
+  } catch (e) {
+    log(`Error loading session map: ${e.message}`);
+    return null;
+  }
+}
+
+export function clearSessionMapping(task) {
+  if (!fs.existsSync(SESSION_MAP_FILE)) {
+    return;
+  }
+  try {
+    const map = JSON.parse(fs.readFileSync(SESSION_MAP_FILE, 'utf8'));
+    delete map[task];
+    fs.writeFileSync(SESSION_MAP_FILE, JSON.stringify(map, null, 2));
+  } catch (e) {
+    log(`Error clearing session map: ${e.message}`);
+  }
 }

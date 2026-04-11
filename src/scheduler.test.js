@@ -153,6 +153,10 @@ function cleanup() {
   if (fs.existsSync(TEST_LOG)) {
     fs.unlinkSync(TEST_LOG);
   }
+  const sessionMapFile = path.join(__dirname, "..", "session-map.json");
+  if (fs.existsSync(sessionMapFile)) {
+    fs.unlinkSync(sessionMapFile);
+  }
 }
 
 // Run tests
@@ -339,6 +343,33 @@ function runTests() {
     const ready = scheduler.getReadySuspendedSessions();
     assert(ready.length === 1);
     assert(ready[0].sessionId === "session-789");
+    cleanup();
+  });
+
+  // Session mapping tests
+  console.log("\n=== Session Mapping Tests ===");
+  test("stores session mapping", () => {
+    cleanup();
+    const sessionInfo = { sessionId: "sess-123", sessionFile: "/path/to/sess.jsonl" };
+    SCHEDULER.storeSessionMapping("my task", sessionInfo);
+    const retrieved = SCHEDULER.getSessionMapping("my task");
+    assert(retrieved !== null);
+    assert(retrieved.sessionId === "sess-123");
+    assert(retrieved.sessionFile === "/path/to/sess.jsonl");
+    cleanup();
+  });
+  test("returns null for non-existent session mapping", () => {
+    cleanup();
+    const retrieved = SCHEDULER.getSessionMapping("non-existent task");
+    assert(retrieved === null);
+    cleanup();
+  });
+  test("clears session mapping", () => {
+    cleanup();
+    SCHEDULER.storeSessionMapping("my task 2", { sessionId: "sess-456" });
+    SCHEDULER.clearSessionMapping("my task 2");
+    const retrieved = SCHEDULER.getSessionMapping("my task 2");
+    assert(retrieved === null);
     cleanup();
   });
 
