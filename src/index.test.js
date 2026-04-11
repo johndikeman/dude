@@ -2,8 +2,8 @@
 
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,13 +22,19 @@ function removeTaskFromPending(task) {
   if (!fs.existsSync(TEST_TASKS)) return false;
   let content = fs.readFileSync(TEST_TASKS, "utf8");
   const originalContent = content;
-  
+
   // Remove the specific task from pending tasks
-  content = content.replace(new RegExp(`- \\[ \\] ${task.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n?`, "s"), "");
-  
+  content = content.replace(
+    new RegExp(
+      `- \\[ \\] ${task.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n?`,
+      "s",
+    ),
+    "",
+  );
+
   // Clean up empty lines and restore the header if needed
   content = content.replace("# Pending Tasks\n\n", "# Pending Tasks\n");
-  
+
   if (content !== originalContent) {
     fs.writeFileSync(TEST_TASKS, content);
     return true;
@@ -48,9 +54,15 @@ function parseScheduleTime(timeStr) {
   // Try parsing as relative time (5m, 1h, 2h30m, etc.)
   const relativeMatch = timeStr.match(/^(\d+h)?(\d+m)?(\d+s)?$/i);
   if (relativeMatch) {
-    const hours = relativeMatch[1] ? parseInt(relativeMatch[1], 10) * 3600000 : 0;
-    const minutes = relativeMatch[2] ? parseInt(relativeMatch[2], 10) * 60000 : 0;
-    const seconds = relativeMatch[3] ? parseInt(relativeMatch[3], 10) * 1000 : 0;
+    const hours = relativeMatch[1]
+      ? parseInt(relativeMatch[1], 10) * 3600000
+      : 0;
+    const minutes = relativeMatch[2]
+      ? parseInt(relativeMatch[2], 10) * 60000
+      : 0;
+    const seconds = relativeMatch[3]
+      ? parseInt(relativeMatch[3], 10) * 1000
+      : 0;
     return now + hours + minutes + seconds;
   }
 
@@ -59,7 +71,12 @@ function parseScheduleTime(timeStr) {
   if (timeMatch) {
     const [, hour, minute, second] = timeMatch;
     const date = new Date();
-    date.setHours(parseInt(hour, 10), parseInt(minute, 10), second ? parseInt(second, 10) : 0, 0);
+    date.setHours(
+      parseInt(hour, 10),
+      parseInt(minute, 10),
+      second ? parseInt(second, 10) : 0,
+      0,
+    );
     if (date.getTime() <= now) {
       date.setDate(date.getDate() + 1);
     }
@@ -144,8 +161,6 @@ test("returns null for invalid format", () => {
   const result = parseScheduleTime("invalid");
   assert(result === null);
 });
-// Note: empty string matches regex (all groups optional), returns current time + 0
-// This is acceptable behavior - it schedules immediately
 test("handles empty string", () => {
   const result = parseScheduleTime("");
   assert(typeof result === "number"); // returns a valid timestamp
@@ -237,14 +252,19 @@ test("handles task with parentheses", () => {
 // Status display tests
 console.log("\n=== Status Display Logic Tests ===");
 
-function buildStatusMsg(isRunning, currentRunningTask, pausedTaskInfo, pendingTasks) {
+function buildStatusMsg(
+  isRunning,
+  currentRunningTask,
+  pausedTaskInfo,
+  pendingTasks,
+) {
   const lines = [
     `**Status Report**`,
     `Working Directory: /test/path`,
     `Model: test-model`,
     `Auto-Next: OFF`,
   ];
-  
+
   if (isRunning && currentRunningTask) {
     lines.push(`Agent: **RUNNING**`);
     lines.push(`Current Task: ${currentRunningTask}`);
@@ -254,14 +274,14 @@ function buildStatusMsg(isRunning, currentRunningTask, pausedTaskInfo, pendingTa
   } else {
     lines.push(`Agent: idle`);
   }
-  
+
   lines.push(`Pending Tasks: ${pendingTasks.length}`);
-  
+
   // Don't show next task when running or paused
   if (pendingTasks.length > 0 && !isRunning && !pausedTaskInfo) {
     lines.push(`Next Task: ${pendingTasks[0]}`);
   }
-  
+
   return lines.join("\n");
 }
 
@@ -299,12 +319,130 @@ test("status does not show next task when running", () => {
 });
 
 test("status does not show next task when paused", () => {
-  const status = buildStatusMsg(false, null, { task: "paused task" }, ["task1", "task2"]);
+  const status = buildStatusMsg(false, null, { task: "paused task" }, [
+    "task1",
+    "task2",
+  ]);
   assert(status.includes("Agent: **PAUSED** (quota)"));
   assert(!status.includes("Next Task:"));
 });
 
-console.log(`\n=== Results ===`);
+// isValidStatus validation tests
+console.log("\n=== isValidStatus Validation Tests ===");
+
+function isValidStatus(status) {
+  if (!status || status.length < 3) return false;
+
+  // Status should start with lowercase letter (as per instructions)
+  if (!/^[a-z]/.test(status)) return false;
+
+  // Avoid instructional text from the prompt
+  const instructionalPatterns = [
+    /^report your status/i,
+    /^printing a line/i,
+    /^starting with/i,
+    /^use lowercase/i,
+    /^the summary should/i,
+    /^only output/i,
+    /^provide a concise/i,
+  ];
+
+  for (const pattern of instructionalPatterns) {
+    if (pattern.test(status)) return false;
+  }
+
+  return true;
+}
+
+test("accepts valid status messages starting with lowercase", () => {
+  assert(isValidStatus("running task"));
+  assert(isValidStatus("implementing feature x"));
+  assert(isValidStatus("completed setup"));
+  assert(isValidStatus("looking for files"));
+});
+
+test("rejects empty or too short status", () => {
+  assert(!isValidStatus(""));
+  assert(!isValidStatus("a"));
+  assert(!isValidStatus("ab"));
+  assert(!isValidStatus(null));
+  assert(!isValidStatus(undefined));
+});
+
+test("rejects status starting with uppercase", () => {
+  assert(!isValidStatus("Running task"));
+  assert(!isValidStatus("Implementing feature"));
+  assert(!isValidStatus("STATUS: something"));
+});
+
+test("rejects instructional text that echoes the prompt", () => {
+  assert(!isValidStatus("report your status by printing a line"));
+  assert(!isValidStatus("printing a line starting with"));
+  assert(!isValidStatus("starting with [STATUS]"));
+  assert(!isValidStatus("use lowercase writing"));
+  assert(!isValidStatus("the summary should be concise"));
+  assert(!isValidStatus("only output the status line"));
+  assert(!isValidStatus("provide a concise one-sentence"));
+});
+
+test("rejects status with instructional patterns at the start", () => {
+  // These should be rejected because they start with known instructional phrases
+  assert(!isValidStatus("report your status by printing"));
+  assert(!isValidStatus("printing a line starting with"));
+  // Note: "need to report your status" is valid because it doesn't START with the pattern
+  // and "need to..." is a reasonable status update format
+  assert(isValidStatus("need to check files"));
+});
+
+test("accepts reasonable progress updates", () => {
+  assert(isValidStatus("working on task x"));
+  assert(isValidStatus("configuring the agent"));
+  assert(isValidStatus("checking file contents"));
+  assert(isValidStatus("fixing the bug"));
+  assert(isValidStatus("waiting for user input"));
+});
+
+// Tests for status summarizer arguments
+console.log("\n=== runStatusSummarizer Arguments Tests ===");
+
+// Extract the runStatusSummarizer function content
+const indexSource = fs.readFileSync(join(__dirname, "index.js"), "utf8");
+const functionStart = indexSource.indexOf("async function runStatusSummarizer");
+const processSpawn = indexSource.indexOf(
+  "const summarizerProcess = spawn",
+  functionStart,
+);
+
+if (functionStart !== -1 && processSpawn !== -1) {
+  const functionContent = indexSource.substring(functionStart, processSpawn);
+
+  test("runStatusSummarizer does not use conflicting --no-session flag", () => {
+    assert(
+      !functionContent.includes("--no-session"),
+      "piArgs should not contain --no-session flag",
+    );
+  });
+
+  test("runStatusSummarizer includes --session flag", () => {
+    assert(
+      functionContent.includes("--session"),
+      "piArgs should contain --session flag",
+    );
+  });
+
+  test("runStatusSummarizer includes --print flag", () => {
+    assert(
+      functionContent.includes("--print"),
+      "piArgs should contain --print flag",
+    );
+  });
+} else {
+  console.log(
+    "  ⚠ Could not locate runStatusSummarizer function for args testing",
+  );
+}
+
+console.log("\n=== Results ===");
 console.log(`  Passed: ${passed}`);
 console.log(`  Failed: ${failed}`);
 

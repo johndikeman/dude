@@ -86,7 +86,7 @@ function initializeModelSettings() {
   FALLBACK_MODEL_CODE = config.fallbackModelCode || null;
   FALLBACK_MODEL_PROVIDER = config.fallbackModelProvider || null;
   USE_FALLBACK_ON_QUOTA_ERROR = config.useFallbackOnQuotaError || false;
-  
+
   // Determine fallback provider if not explicitly set
   if (FALLBACK_MODEL_CODE && !FALLBACK_MODEL_PROVIDER) {
     if (FALLBACK_MODEL_CODE === "qwen3.5:122b") {
@@ -95,7 +95,7 @@ function initializeModelSettings() {
       FALLBACK_MODEL_PROVIDER = "google-gemini-cli";
     }
   }
-  
+
   // Determine main provider if not explicitly set
   if (!MODEL_PROVIDER) {
     if (MODEL_CODE === "qwen3.5:122b") {
@@ -104,10 +104,12 @@ function initializeModelSettings() {
       MODEL_PROVIDER = "google-gemini-cli";
     }
   }
-  
+
   log(`Initialized model: ${MODEL_CODE} (${MODEL_PROVIDER})`);
   if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
-    log(`Fallback model enabled: ${FALLBACK_MODEL_CODE} (${FALLBACK_MODEL_PROVIDER})`);
+    log(
+      `Fallback model enabled: ${FALLBACK_MODEL_CODE} (${FALLBACK_MODEL_PROVIDER})`,
+    );
   }
 }
 
@@ -261,7 +263,9 @@ const commands = [
     .addStringOption((option) =>
       option
         .setName("model")
-        .setDescription("Fallback model code (e.g., gemini-2.5-pro, qwen3.5:122b)")
+        .setDescription(
+          "Fallback model code (e.g., gemini-2.5-pro, qwen3.5:122b)",
+        )
         .setRequired(true),
     ),
   new SlashCommandBuilder()
@@ -272,7 +276,10 @@ const commands = [
         .setName("enabled")
         .setDescription("Enable or disable fallback (true/false)")
         .setRequired(true)
-        .addChoices({ name: "enabled", value: "true" }, { name: "disabled", value: "false" }),
+        .addChoices(
+          { name: "enabled", value: "true" },
+          { name: "disabled", value: "false" },
+        ),
     ),
   new SlashCommandBuilder().setName("help").setDescription("Show help message"),
   new SlashCommandBuilder()
@@ -402,6 +409,10 @@ async function checkAndRunScheduledTasks() {
     log(`Found ${ready.paused.length} paused tasks ready to resume`);
     for (const task of ready.paused) {
       log(`Resuming paused task: ${task.task}`);
+      // Store session mapping so runCycle can find and resume the session
+      if (task.sessionInfo) {
+        SCHEDULER.storeSessionMapping(task.task, task.sessionInfo);
+      }
       // Remove from paused and add back to tasks.md
       ready.schedule.paused = ready.schedule.paused.filter(
         (t) => t.id !== task.id,
@@ -484,7 +495,9 @@ client.on("interactionCreate", async (interaction) => {
       `Auto-Next: ${config.autoNext ? "**ON**" : "OFF"}`,
     ];
     if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
-      statusLines.push(`Fallback Model: ${FALLBACK_MODEL_CODE} (${FALLBACK_MODEL_PROVIDER})`);
+      statusLines.push(
+        `Fallback Model: ${FALLBACK_MODEL_CODE} (${FALLBACK_MODEL_PROVIDER})`,
+      );
     }
 
     if (isRunning && currentRunningTask) {
@@ -545,7 +558,9 @@ client.on("interactionCreate", async (interaction) => {
     config.modelCode = MODEL_CODE;
     config.modelProvider = MODEL_PROVIDER;
     saveConfig();
-    await interaction.reply(`model updated to ${MODEL_CODE} (${MODEL_PROVIDER})`);
+    await interaction.reply(
+      `model updated to ${MODEL_CODE} (${MODEL_PROVIDER})`,
+    );
   }
 
   if (commandName === "autonext") {
@@ -587,7 +602,7 @@ client.on("interactionCreate", async (interaction) => {
 
   if (commandName === "start") {
     const response = await interaction.reply({
-      content: "Starting self-improvement cycle...",
+      content: "starting...",
       fetchReply: true,
     });
     runCycle(interaction, response);
@@ -671,6 +686,10 @@ client.on("interactionCreate", async (interaction) => {
       if (!removed) {
         await interaction.editReply(`No paused task found with ID: ${taskId}`);
         return;
+      }
+      // Store session mapping so runCycle can find and resume the session
+      if (removed.sessionInfo) {
+        SCHEDULER.storeSessionMapping(removed.task, removed.sessionInfo);
       }
       // Add the task back to tasks.md
       addTask(removed.task);
@@ -815,18 +834,24 @@ client.on("interactionCreate", async (interaction) => {
     config.fallbackModelCode = FALLBACK_MODEL_CODE;
     config.fallbackModelProvider = FALLBACK_MODEL_PROVIDER;
     saveConfig();
-    await interaction.reply(`Fallback model set to **${FALLBACK_MODEL_CODE}** (${FALLBACK_MODEL_PROVIDER}). Enable with /fallbackenabled.`);
+    await interaction.reply(
+      `Fallback model set to **${FALLBACK_MODEL_CODE}** (${FALLBACK_MODEL_PROVIDER}). Enable with /fallbackenabled.`,
+    );
   }
-  
+
   if (commandName === "fallbackenabled") {
     const enabled = options.getString("enabled");
     USE_FALLBACK_ON_QUOTA_ERROR = enabled === "true";
     config.useFallbackOnQuotaError = USE_FALLBACK_ON_QUOTA_ERROR;
     saveConfig();
     if (USE_FALLBACK_ON_QUOTA_ERROR && !FALLBACK_MODEL_CODE) {
-      await interaction.reply(`Fallback enabled **${USE_FALLBACK_ON_QUOTA_ERROR}** but no fallback model is configured. Use /fallbackmodel to set one.`);
+      await interaction.reply(
+        `Fallback enabled **${USE_FALLBACK_ON_QUOTA_ERROR}** but no fallback model is configured. Use /fallbackmodel to set one.`,
+      );
     } else {
-      await interaction.reply(`Fallback on quota errors is now **${USE_FALLBACK_ON_QUOTA_ERROR}**. Currently using: ${FALLBACK_MODEL_CODE || "none"}.`);
+      await interaction.reply(
+        `Fallback on quota errors is now **${USE_FALLBACK_ON_QUOTA_ERROR}**. Currently using: ${FALLBACK_MODEL_CODE || "none"}.`,
+      );
     }
   }
 
@@ -1089,7 +1114,7 @@ async function runCycle(interaction, initialStatusMessage = null) {
   let task = tasks[0];
   currentRunningTask = task;
   log(`Working on task: ${task}`);
-  
+
   // Check if this is a fallback retry task
   let isFallbackRetry = false;
   let originalTask = task;
@@ -1097,7 +1122,9 @@ async function runCycle(interaction, initialStatusMessage = null) {
   if (task.startsWith("[FALLBACK_RETRY]")) {
     isFallbackRetry = true;
     // Extract original task and error
-    const match = task.match(/\[FALLBACK_RETRY\]\s*Original:\s*(.+?)\s*Previous error:\s*(.+)/s);
+    const match = task.match(
+      /\[FALLBACK_RETRY\]\s*Original:\s*(.+?)\s*Previous error:\s*(.+)/s,
+    );
     if (match) {
       originalTask = match[1].trim();
       previousError = match[2].trim();
@@ -1105,7 +1132,7 @@ async function runCycle(interaction, initialStatusMessage = null) {
     }
     log(`Fallback retry enabled. Using fallback model: ${FALLBACK_MODEL_CODE}`);
   }
-  
+
   // Switch to fallback model if this is a retry task
   if (isFallbackRetry && USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
     MODEL_CODE = FALLBACK_MODEL_CODE;
@@ -1159,9 +1186,19 @@ Context:
   let pausedTaskId = null;
   let quotaErrorHandled = false;
 
+  // Check if this task has a previous session to resume
+  const sessionMapping = SCHEDULER.getSessionMapping(task);
+  let existingSessionId = null;
+  if (sessionMapping && sessionMapping.sessionId) {
+    existingSessionId = sessionMapping.sessionId;
+    log(`Resuming task from existing session: ${existingSessionId}`);
+    // Clear the session mapping since we're using it now
+    SCHEDULER.clearSessionMapping(task);
+  }
+
   // Create a session for this task run
   let previousSessionId = null;
-  
+
   try {
     const sessionOptions = {
       discordMessageId: statusMessage ? statusMessage.id : null,
@@ -1169,17 +1206,19 @@ Context:
       workspacePath: config.workDir,
       prompt: prompt.substring(0, 2000), // Store prompt snippet
     };
-    
+
     if (isFallbackRetry) {
       // For fallback retry, find the most recent active session to continue from
       const sessions = SESSIONS.loadSessions();
-      const activeSessions = sessions.active.sort((a, b) => b.createdAt - a.createdAt);
-      
+      const activeSessions = sessions.active.sort(
+        (a, b) => b.createdAt - a.createdAt,
+      );
+
       if (activeSessions.length > 0) {
         const prevSession = activeSessions[0];
         previousSessionId = prevSession.id;
         log(`Continuing from previous session: ${previousSessionId}`);
-        
+
         // Build the prompt to resume with context from previous run
         const continuePrompt = `RESUME MODE: This is a continuation of a previous session that was interrupted due to a quota error. 
 
@@ -1187,9 +1226,9 @@ Previous error was: ${previousError}
 
 Continuing the task: ${task}
 
-${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
+${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
         sessionOptions.prompt = continuePrompt.substring(0, 2000);
-        
+
         sessionOptions.lastModel = MODEL_CODE;
         sessionOptions.lastModelError = previousError;
         sessionOptions.fallbackRetryContext = {
@@ -1197,7 +1236,7 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
           previousModelError: previousError,
           fallbackModelUsed: MODEL_CODE,
         };
-        
+
         // Update the existing session
         SESSIONS.updateSession(previousSessionId, {
           lastModel: MODEL_CODE,
@@ -1214,12 +1253,35 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
         };
       }
     }
-    
+
+    // existingSessionId will be here if we already had a session for this prompt in the sessions file
+    if (existingSessionId) {
+      // Update existing session with new info for this run
+      SESSIONS.updateSession(existingSessionId, {
+        discordMessageId: statusMessage ? statusMessage.id : null,
+        discordChannelId: statusMessage ? statusMessage.channelId : null,
+        workspacePath: config.workDir,
+      });
+      currentSessionId = existingSessionId;
+      log(`Resumed session ${currentSessionId} for task: ${task}`);
+    } else {
+      const session = SESSIONS.createSession(task, {
+        discordMessageId: statusMessage ? statusMessage.id : null,
+        discordChannelId: statusMessage ? statusMessage.channelId : null,
+        workspacePath: config.workDir,
+        prompt: prompt.substring(0, 2000), // Store prompt snippet
+      });
+      currentSessionId = session.id;
+      log(`Created session ${currentSessionId} for task: ${task}`);
+    }
+
     // Only create new session if we're not continuing from a previous one
     if (!isFallbackRetry || !previousSessionId) {
       const session = SESSIONS.createSession(task, sessionOptions);
       currentSessionId = session.id;
-      log(`Created session ${currentSessionId} for task: ${task}${isFallbackRetry ? ' (fallback retry, no previous session)' : ''}`);
+      log(
+        `Created session ${currentSessionId} for task: ${task}${isFallbackRetry ? " (fallback retry, no previous session)" : ""}`,
+      );
     } else {
       currentSessionId = previousSessionId;
       log(`Continuing session ${currentSessionId} for fallback retry: ${task}`);
@@ -1233,6 +1295,7 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
     "sessions",
     `${currentSessionId || Date.now()}.jsonl`,
   );
+
   if (!fs.existsSync(path.dirname(sessionFilePath))) {
     fs.mkdirSync(path.dirname(sessionFilePath), { recursive: true });
   }
@@ -1363,8 +1426,11 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
               for (const line of lines) {
                 const trimmedLine = line.trim();
                 if (trimmedLine.includes("[STATUS]")) {
-                  currentStatus = trimmedLine.split("[STATUS]")[1].trim();
-                  updateDiscordStatus();
+                  const status = trimmedLine.split("[STATUS]")[1].trim();
+                  if (isValidStatus(status)) {
+                    currentStatus = status;
+                    updateDiscordStatus();
+                  }
                 }
               }
             }
@@ -1387,8 +1453,11 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
               for (const line of lines) {
                 const trimmedLine = line.trim();
                 if (trimmedLine.includes("[STATUS]")) {
-                  currentStatus = trimmedLine.split("[STATUS]")[1].trim();
-                  updateDiscordStatus();
+                  const status = trimmedLine.split("[STATUS]")[1].trim();
+                  if (isValidStatus(status)) {
+                    currentStatus = status;
+                    updateDiscordStatus();
+                  }
                 }
               }
             }
@@ -1410,16 +1479,16 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
         if (quotaErrorInfo && !quotaErrorHandled) {
           quotaErrorHandled = true;
           log(`Quota error detected in JSON: ${quotaErrorInfo.errorMessage}`);
-          
+
           if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
             // Use fallback model - restart the session with new model
             log(`Switching to fallback model: ${FALLBACK_MODEL_CODE}`);
             currentStatus = `Quota exhausted. Switching to fallback model ${FALLBACK_MODEL_CODE} to continue...`;
             updateDiscordStatus(true);
-            
+
             // Kill current pi process
             piProcess.kill("SIGINT");
-            
+
             // Update the session to use the fallback model (stored in session file)
             // The session file will persist the model info for continuation
             try {
@@ -1428,20 +1497,24 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
                 fallbackModelUsed: FALLBACK_MODEL_CODE,
                 lastModelError: quotaErrorInfo.errorMessage,
               });
-              log(`Session updated with fallback info for resume: ${currentSessionId}`);
+              log(
+                `Session updated with fallback info for resume: ${currentSessionId}`,
+              );
             } catch (e) {
               log(`Failed to update session with fallback info: ${e.message}`);
             }
-            
+
             // Stop current cycle and re-queue the task for retry with fallback model
             if (statusUpdateInterval) clearInterval(statusUpdateInterval);
             isRunning = false;
             currentRunningTask = null;
             pausedTaskInfo = null;
-            
+
             // Add the task back to the queue (will pick up with fallback model on retry)
-            addTask(`[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${quotaErrorInfo.errorMessage}`);
-            
+            addTask(
+              `[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${quotaErrorInfo.errorMessage}`,
+            );
+
             // Clear the current model tracking for this cycle
             quotaErrorHandled = true;
             updateDiscordStatus(true);
@@ -1476,8 +1549,11 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
         // Not valid JSON, treat as plain text
         // Look for [STATUS] in plain text lines
         if (trimmed.includes("[STATUS]")) {
-          currentStatus = trimmed.split("[STATUS]")[1].trim();
-          updateDiscordStatus();
+          const status = trimmed.split("[STATUS]")[1].trim();
+          if (isValidStatus(status)) {
+            currentStatus = status;
+            updateDiscordStatus();
+          }
         }
 
         // Check for quota errors in plain text
@@ -1486,22 +1562,24 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
           const errorInfo = SCHEDULER.parseQuotaError(trimmed);
           if (errorInfo) {
             log(`Quota error detected in text: ${errorInfo.errorMessage}`);
-            
+
             if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
               // Use fallback model - restart the session with new model
               log(`Switching to fallback model: ${FALLBACK_MODEL_CODE}`);
               currentStatus = `Quota exhausted. Switching to fallback model ${FALLBACK_MODEL_CODE} to continue...`;
               updateDiscordStatus(true);
-              
+
               // Stop this cycle and re-queue the task for retry
               if (statusUpdateInterval) clearInterval(statusUpdateInterval);
               isRunning = false;
               currentRunningTask = null;
               pausedTaskInfo = null;
-              
+
               // Add the task back to the queue (will pick up with fallback model on retry)
-              addTask(`[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${errorInfo.errorMessage}`);
-              
+              addTask(
+                `[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${errorInfo.errorMessage}`,
+              );
+
               // Clear the handler
               quotaErrorHandled = true;
               updateDiscordStatus(true);
@@ -1513,9 +1591,17 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
               updateDiscordStatus(true);
 
               // Pause the task
-              const paused = SCHEDULER.pauseTask(task, errorInfo);
+              const paused = SCHEDULER.pauseTask(task, errorInfo, {
+                sessionId: currentSessionId,
+                sessionFile: sessionFilePath,
+              });
               pausedTaskId = paused.id;
-              pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo };
+              pausedTaskInfo = {
+                task,
+                resumeAt: paused.resumeAt,
+                errorInfo,
+                sessionId: currentSessionId,
+              };
 
               // Remove the task from pending tasks in tasks.md to prevent retry
               removeTaskFromPending(task);
@@ -1548,28 +1634,31 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
         const errorInfo = SCHEDULER.parseQuotaError(trimmed);
         if (errorInfo) {
           log(`Quota error detected in stderr: ${errorInfo.errorMessage}`);
-          
+
           if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
             // Use fallback model - restart the session with new model
             log(`Switching to fallback model: ${FALLBACK_MODEL_CODE}`);
             currentStatus = `Quota exhausted. Switching to fallback model ${FALLBACK_MODEL_CODE} to continue...`;
             updateDiscordStatus(true);
-            
+
             // Stop this cycle and re-queue the task for retry
             if (statusUpdateInterval) clearInterval(statusUpdateInterval);
             isRunning = false;
             currentRunningTask = null;
             pausedTaskInfo = null;
-            
+
             // Add the task back to the queue (will pick up with fallback model on retry)
-            addTask(`[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${errorInfo.errorMessage}`);
-            
+            addTask(
+              `[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${errorInfo.errorMessage}`,
+            );
+
             // Clear the handler
             quotaErrorHandled = true;
             updateDiscordStatus(true);
           } else {
             // Original behavior - pause the task
-            const hasTime = errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
+            const hasTime =
+              errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
             const waitInfo = hasTime
               ? `until ${formatDuration(errorInfo.resetAfterMs)}`
               : "until quota resets (estimated 1 hour)";
@@ -1577,9 +1666,17 @@ ${prompt.substring(prompt.indexOf('You are a self-improving agent'))}`;
             updateDiscordStatus(true);
 
             // Pause the task
-            const paused = SCHEDULER.pauseTask(task, errorInfo);
+            const paused = SCHEDULER.pauseTask(task, errorInfo, {
+              sessionId: currentSessionId,
+              sessionFile: sessionFilePath,
+            });
             pausedTaskId = paused.id;
-            pausedTaskInfo = { task, resumeAt: paused.resumeAt, errorInfo };
+            pausedTaskInfo = {
+              task,
+              resumeAt: paused.resumeAt,
+              errorInfo,
+              sessionId: currentSessionId,
+            };
 
             // Remove the task from pending tasks in tasks.md to prevent retry
             removeTaskFromPending(task);
@@ -1789,7 +1886,6 @@ Only output the status line starting with [STATUS]. Use lowercase writing and a 
     config.statusUpdateModel || "gemini-2.0-flash",
     "--session",
     sessionFilePath,
-    "--no-session",
     "--print",
     summarizerPrompt,
   ];
@@ -1799,8 +1895,13 @@ Only output the status line starting with [STATUS]. Use lowercase writing and a 
   });
 
   let output = "";
+  let error = "";
   summarizerProcess.stdout.on("data", (data) => {
     output += data.toString();
+  });
+
+  summarizerProcess.stderr.on("data", (data) => {
+    error += data.toString();
   });
 
   summarizerProcess.on("close", (code) => {
@@ -1809,12 +1910,45 @@ Only output the status line starting with [STATUS]. Use lowercase writing and a 
       for (const line of lines) {
         if (line.trim().includes("[STATUS]")) {
           const status = line.trim().split("[STATUS]")[1].trim();
-          updateStatus(status);
-          break;
+          // Validate status: should be lowercase and not instructional text
+          if (isValidStatus(status)) {
+            updateStatus(status);
+            break;
+          }
         }
       }
     } else {
       log(`Status summarizer failed with code ${code}`);
+      if (error) {
+        log(`Error output: ${error.trim()}`);
+      }
     }
   });
+}
+
+// Helper function to validate status messages
+// Returns true if the status looks like a legitimate progress update
+// (starts with lowercase, not instructional text from prompt)
+function isValidStatus(status) {
+  if (!status || status.length < 3) return false;
+
+  // Status should start with lowercase letter (as per instructions)
+  if (!/^[a-z]/.test(status)) return false;
+
+  // Avoid instructional text from the prompt
+  const instructionalPatterns = [
+    /^report your status/i,
+    /^printing a line/i,
+    /^starting with/i,
+    /^use lowercase/i,
+    /^the summary should/i,
+    /^only output/i,
+    /^provide a concise/i,
+  ];
+
+  for (const pattern of instructionalPatterns) {
+    if (pattern.test(status)) return false;
+  }
+
+  return true;
 }
