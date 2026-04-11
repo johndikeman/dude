@@ -1,5 +1,5 @@
-const { parseQuotaError, isQuotaError } = require("../src/scheduler");
-const assert = require("assert");
+import { parseQuotaError, isQuotaError } from "../src/scheduler.js";
+import assert from "assert";
 
 // Test cases for parseQuotaError with time
 const testCasesWithTime = [
