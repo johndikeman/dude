@@ -104,48 +104,114 @@
             };
           };
 
-          config = lib.mkIf config.services.dude-agent.enable {
-            systemd.user.services.dude-agent = {
-              Unit = {
-                Description = "Dude Self-Improving AI Agent";
-                After = [ "network.target" ];
-                StartLimitBurst = "5";
-                StartLimitIntervalSec = "120s";
-              };
-              Service = {
-                Type = "simple";
-                WorkingDirectory = config.services.dude-agent.workingDirectory;
-                ExecStartPre = [
-                  "${pkgs.coreutils}/bin/mkdir -p ${config.services.dude-agent.configDirectory}"
-                  "${pkgs._1password-cli}/bin/op run --env-file ${config.services.dude-agent.package}/.opvars -- /usr/bin/bash -c \"[ -z \"$GEMINI_JSON_TOKEN\" ] || echo \"$GEMINI_JSON_TOKEN\" > ~/.pi/agent/auth.json\""
-                ];
-                ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${config.services.dude-agent.package}/.opvars -- ${config.services.dude-agent.package}/bin/dude-agent";
-                Restart = "always";
-                RestartSec = "5s";
-                Environment = [
-                  "DUDE_CONFIG_DIR=${config.services.dude-agent.configDirectory}"
-                  "PI_SKILLS=${self.packages.${pkgs.system}.skills}/skills"
-                  "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
-                  "PATH=${
-                    lib.makeBinPath [
-                      pkgs.git
-                      pkgs.gh
-                      pkgs.google-cloud-sdk
-                      pkgs.nodejs_24
-                      pkgs._1password-cli
-                      pkgs.chromium
-                      pkgs.coreutils
-                    ]
-                  }:${config.services.dude-agent.package}/lib/node_modules/dude-agent/node_modules/.bin:/usr/bin:/bin"
-                ];
-                EnvironmentFile = [
-                  "-${config.services.dude-agent.workingDirectory}/.env"
-                  "-${config.services.dude-agent.configDirectory}/.env"
-                ];
-              };
-              Install.WantedBy = [ "default.target" ];
+          options.services.dude-lichess-checker = {
+            enable = lib.mkEnableOption "Dude Lichess Checker Service";
+            package = lib.mkOption {
+              type = lib.types.package;
+              default = self.packages.${pkgs.system}.default;
+            };
+            workingDirectory = lib.mkOption {
+              type = lib.types.str;
+              default = "${config.home.homeDirectory}/dude-workspace";
+            };
+            configDirectory = lib.mkOption {
+              type = lib.types.str;
+              default = "${config.home.homeDirectory}/.config/dude";
+            };
+            lichessUsername = lib.mkOption {
+              type = lib.types.str;
+              description = "Lichess username to track";
+            };
+            interval = lib.mkOption {
+              type = lib.types.str;
+              default = "daily";
+              description = "Systemd timer interval (e.g., 'daily', 'hourly', '*-*-* 00:00:00')";
             };
           };
+
+          config = lib.mkMerge [
+            (lib.mkIf config.services.dude-agent.enable {
+              systemd.user.services.dude-agent = {
+                Unit = {
+                  Description = "Dude Self-Improving AI Agent";
+                  After = [ "network.target" ];
+                  StartLimitBurst = "5";
+                  StartLimitIntervalSec = "120s";
+                };
+                Service = {
+                  Type = "simple";
+                  WorkingDirectory = config.services.dude-agent.workingDirectory;
+                  ExecStartPre = [
+                    "${pkgs.coreutils}/bin/mkdir -p ${config.services.dude-agent.configDirectory}"
+                    "${pkgs._1password-cli}/bin/op run --env-file ${config.services.dude-agent.package}/.opvars -- /usr/bin/bash -c \"[ -z \"$GEMINI_JSON_TOKEN\" ] || echo \"$GEMINI_JSON_TOKEN\" > ~/.pi/agent/auth.json\""
+                  ];
+                  ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${config.services.dude-agent.package}/.opvars -- ${config.services.dude-agent.package}/bin/dude-agent";
+                  Restart = "always";
+                  RestartSec = "5s";
+                  Environment = [
+                    "DUDE_CONFIG_DIR=${config.services.dude-agent.configDirectory}"
+                    "PI_SKILLS=${self.packages.${pkgs.system}.skills}/skills"
+                    "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
+                    "PATH=${
+                      lib.makeBinPath [
+                        pkgs.git
+                        pkgs.gh
+                        pkgs.google-cloud-sdk
+                        pkgs.nodejs_24
+                        pkgs._1password-cli
+                        pkgs.chromium
+                        pkgs.coreutils
+                      ]
+                    }:${config.services.dude-agent.package}/lib/node_modules/dude-agent/node_modules/.bin:/usr/bin:/bin"
+                  ];
+                  EnvironmentFile = [
+                    "-${config.services.dude-agent.workingDirectory}/.env"
+                    "-${config.services.dude-agent.configDirectory}/.env"
+                  ];
+                };
+                Install.WantedBy = [ "default.target" ];
+              };
+            })
+
+            (lib.mkIf config.services.dude-lichess-checker.enable {
+              systemd.user.services.dude-lichess-checker = {
+                Unit = {
+                  Description = "Dude Lichess Game Checker";
+                  After = [ "network.target" ];
+                };
+                Service = {
+                  Type = "oneshot";
+                  WorkingDirectory = config.services.dude-lichess-checker.workingDirectory;
+                  ExecStartPre = [
+                    "${pkgs.coreutils}/bin/mkdir -p ${config.services.dude-lichess-checker.configDirectory}"
+                    # Ensure config.json has the username
+                    "${pkgs.nodejs_24}/bin/node -e 'const fs=require(\"fs\"); const path=\"${config.services.dude-lichess-checker.configDirectory}/config.json\"; let c={}; if(fs.existsSync(path)) c=JSON.parse(fs.readFileSync(path)); c.lichessUsername=\"${config.services.dude-lichess-checker.lichessUsername}\"; fs.writeFileSync(path, JSON.stringify(c, null, 2));'"
+                  ];
+                  ExecStart = "${pkgs.nodejs_24}/bin/node ${config.services.dude-lichess-checker.package}/lib/node_modules/dude-agent/src/daily-check.js";
+                  Environment = [
+                    "DUDE_CONFIG_DIR=${config.services.dude-lichess-checker.configDirectory}"
+                    "PATH=${
+                      lib.makeBinPath [
+                        pkgs.nodejs_24
+                        pkgs.coreutils
+                      ]
+                    }:/usr/bin:/bin"
+                  ];
+                };
+              };
+
+              systemd.user.timers.dude-lichess-checker = {
+                Unit = {
+                  Description = "Timer for Dude Lichess Game Checker";
+                };
+                Timer = {
+                  OnCalendar = config.services.dude-lichess-checker.interval;
+                  Persistent = true;
+                };
+                Install.WantedBy = [ "timers.target" ];
+              };
+            })
+          ];
         };
     };
 }
