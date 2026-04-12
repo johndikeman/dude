@@ -1240,6 +1240,7 @@ Context:
 
   let piOutput = "";
   let piError = "";
+  let lastAssistantMessage = "";
   let statusMessage = initialStatusMessage;
   let currentSessionId = null;
   let lastStatusUpdate = 0;
@@ -1478,6 +1479,19 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
 
         // Handle message events (start, update, end)
         if (event.message && event.message.content) {
+          // Keep track of the last model message text for the final follow-up
+          if (event.message.role === "assistant") {
+            let messageText = "";
+            for (const content of event.message.content) {
+              if (content.type === "text" && content.text) {
+                messageText += content.text;
+              }
+            }
+            if (messageText) {
+              lastAssistantMessage = messageText;
+            }
+          }
+
           for (const content of event.message.content) {
             let text = "";
             if (content.type === "text") text = content.text;
@@ -1779,7 +1793,8 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
       }
 
       if (interaction) {
-        const cleanedOutput = stripAnsi(piOutput.trim());
+        const finalResponse = lastAssistantMessage || piOutput;
+        const cleanedOutput = stripAnsi(finalResponse.trim());
         const truncatedOutput =
           cleanedOutput.length > 1900
             ? "..." + cleanedOutput.slice(-1900)
@@ -1788,7 +1803,8 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
           truncatedOutput || "Task completed successfully (no output).",
         );
       } else if (statusMessage) {
-        const cleanedOutput = stripAnsi(piOutput.trim());
+        const finalResponse = lastAssistantMessage || piOutput;
+        const cleanedOutput = stripAnsi(finalResponse.trim());
         const truncatedOutput =
           cleanedOutput.length > 1900
             ? "..." + cleanedOutput.slice(-1900)
