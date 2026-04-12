@@ -203,7 +203,8 @@ const commands = [
       option
         .setName("id")
         .setDescription("The ID of the paused task")
-        .setRequired(true),
+        .setRequired(true)
+        .setAutocomplete(true),
     ),
   new SlashCommandBuilder()
     .setName("cancel")
@@ -212,13 +213,18 @@ const commands = [
       option
         .setName("id")
         .setDescription("The ID of the task to cancel")
-        .setRequired(true),
+        .setRequired(true)
+        .setAutocomplete(true),
     )
     .addStringOption((option) =>
       option
         .setName("type")
         .setDescription("Type of task to cancel (paused or scheduled)")
-        .setRequired(false),
+        .setRequired(false)
+        .addChoices(
+          { name: "paused", value: "paused" },
+          { name: "scheduled", value: "scheduled" },
+        ),
     ),
   new SlashCommandBuilder()
     .setName("run-scheduled")
@@ -227,7 +233,8 @@ const commands = [
       option
         .setName("id")
         .setDescription("The ID of the scheduled task")
-        .setRequired(true),
+        .setRequired(true)
+        .setAutocomplete(true),
     ),
   new SlashCommandBuilder()
     .setName("autonext")
@@ -448,6 +455,61 @@ async function checkAndRunScheduledTasks() {
 }
 
 client.on("interactionCreate", async (interaction) => {
+  if (interaction.isAutocomplete()) {
+    const { commandName, options } = interaction;
+    const focusedOption = options.getFocused(true);
+
+    if (focusedOption.name === "id") {
+      let choices = [];
+      const scheduled = SCHEDULER.listScheduledTasks();
+      const paused = SCHEDULER.listPausedTasks();
+
+      if (commandName === "resume") {
+        choices = paused.map((t) => ({
+          name: `${t.task.substring(0, 80)} (Paused)`,
+          value: t.id,
+        }));
+      } else if (commandName === "run-scheduled") {
+        choices = scheduled.map((t) => ({
+          name: `${t.task.substring(0, 80)} (Scheduled)`,
+          value: t.id,
+        }));
+      } else if (commandName === "cancel") {
+        const type = options.getString("type");
+        if (type === "paused") {
+          choices = paused.map((t) => ({
+            name: `${t.task.substring(0, 80)} (Paused)`,
+            value: t.id,
+          }));
+        } else if (type === "scheduled") {
+          choices = scheduled.map((t) => ({
+            name: `${t.task.substring(0, 80)} (Scheduled)`,
+            value: t.id,
+          }));
+        } else {
+          choices = [
+            ...paused.map((t) => ({
+              name: `${t.task.substring(0, 80)} (Paused)`,
+              value: t.id,
+            })),
+            ...scheduled.map((t) => ({
+              name: `${t.task.substring(0, 80)} (Scheduled)`,
+              value: t.id,
+            })),
+          ];
+        }
+      }
+
+      const filtered = choices
+        .filter((choice) =>
+          choice.name.toLowerCase().includes(focusedOption.value.toLowerCase()),
+        )
+        .slice(0, 25);
+      await interaction.respond(filtered);
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   // Store channel ID for autoNext status updates
