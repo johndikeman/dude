@@ -13,6 +13,13 @@ export default function (pi: ExtensionAPI) {
   const TASKS_PATH = "/home/ubuntu/.config/dude/tasks.md";
 
   pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "bash") {
+      const command = event.input.command as string;
+      if (command.includes(TASKS_PATH) || command.includes("tasks.md")) {
+        return { block: true, reason: "Direct modification of tasks.md via bash is not allowed. Use the 'edit' or 'write' tools instead, or 'read' to view it." };
+      }
+    }
+
     if (event.toolName !== "write" && event.toolName !== "edit") {
       return undefined;
     }
