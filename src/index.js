@@ -25,12 +25,16 @@ const client = new Client({
   partials: [Partials.Message],
 });
 
-const CONFIG_DIR = process.env.DUDE_CONFIG_DIR || process.cwd();
-
-const TASKS_FILE = path.join(CONFIG_DIR, "tasks.md");
-const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
-const LOG_FILE = path.join(CONFIG_DIR, "agent.log");
-const REPO_BRIEF_FILE = path.join(process.cwd(), "REPO_BRIEF.md");
+const getPaths = () => {
+  const configDir = process.env.DUDE_CONFIG_DIR || process.cwd();
+  return {
+    configDir,
+    tasksFile: path.join(configDir, "tasks.md"),
+    configFile: path.join(configDir, "config.json"),
+    logFile: path.join(configDir, "agent.log"),
+    repoBriefFile: path.join(process.cwd(), "REPO_BRIEF.md"),
+  };
+};
 
 // Model configuration - loaded from config file
 let MODEL_CODE = null;
@@ -40,10 +44,11 @@ let FALLBACK_MODEL_PROVIDER = null;
 let USE_FALLBACK_ON_QUOTA_ERROR = false;
 
 function log(msg) {
+  const { logFile } = getPaths();
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
   try {
-    fs.appendFileSync(LOG_FILE, line + "\n");
+    fs.appendFileSync(logFile, line + "\n");
   } catch (e) {}
 }
 
@@ -70,9 +75,9 @@ let isRunning = false;
 let currentRunningTask = null;
 let pausedTaskInfo = null; // Store info about paused tasks for status display
 
-if (fs.existsSync(CONFIG_FILE)) {
+if (fs.existsSync(getPaths().configFile)) {
   try {
-    const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+    const savedConfig = JSON.parse(fs.readFileSync(getPaths().configFile, "utf8"));
     config = { ...config, ...savedConfig };
   } catch (e) {
     log(`Error loading config: ${e.message}`);
@@ -120,7 +125,7 @@ function saveConfig() {
   config.fallbackModelCode = FALLBACK_MODEL_CODE;
   config.fallbackModelProvider = FALLBACK_MODEL_PROVIDER;
   config.useFallbackOnQuotaError = USE_FALLBACK_ON_QUOTA_ERROR;
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  fs.writeFileSync(getPaths().configFile, JSON.stringify(config, null, 2));
 }
 
 // Slash Command Definitions
@@ -1110,8 +1115,9 @@ function formatDuration(ms) {
 }
 
 function addTask(task) {
-  let content = fs.existsSync(TASKS_FILE)
-    ? fs.readFileSync(TASKS_FILE, "utf8")
+  const { tasksFile } = getPaths();
+  let content = fs.existsSync(tasksFile)
+    ? fs.readFileSync(tasksFile, "utf8")
     : "# Pending Tasks\n";
   if (!content.includes("# Pending Tasks")) {
     content = "# Pending Tasks\n" + content;
@@ -1120,12 +1126,13 @@ function addTask(task) {
     "# Pending Tasks\n",
     `# Pending Tasks\n- [ ] ${task}\n`,
   );
-  fs.writeFileSync(TASKS_FILE, content);
+  fs.writeFileSync(tasksFile, content);
 }
 
 function removeTaskFromPending(task) {
-  if (!fs.existsSync(TASKS_FILE)) return false;
-  let content = fs.readFileSync(TASKS_FILE, "utf8");
+  const { tasksFile } = getPaths();
+  if (!fs.existsSync(tasksFile)) return false;
+  let content = fs.readFileSync(tasksFile, "utf8");
   const originalContent = content;
 
   // Remove the specific task from pending tasks
@@ -1210,8 +1217,8 @@ async function runCycle(interaction, initialStatusMessage = null) {
     return;
   }
 
-  const repoBrief = fs.existsSync(REPO_BRIEF_FILE)
-    ? fs.readFileSync(REPO_BRIEF_FILE, "utf8")
+  const repoBrief = fs.existsSync(getPaths().repoBriefFile)
+    ? fs.readFileSync(getPaths().repoBriefFile, "utf8")
     : "";
 
   const prompt = `You are a self-improving AI agent. 
@@ -1227,14 +1234,14 @@ Create a feature branch to work on, REMEMBER TO ALWAYS FIRST pull in the most re
 when appropriate, write testcases to test new code.
 IMPORTANT: When you are working on a task, periodically report your status by printing a line starting with [STATUS] followed by your current activity. This status will be displayed in Discord.
 Then, commit the code to the feature branch and open a PR using gh cli.
-When the task is complete, mark it as done in the task file (${TASKS_FILE}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
+When the task is complete, mark it as done in the task file (${getPaths().tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
 make sure your final message is a summary of the work that was done, or an explanation of the failure.
 
 if needed, previous sessions can be found in ~/.pi/agent/sessions/
 use lowercase writing and a semi-informal tone.
 
 Context:
-- Task File: ${TASKS_FILE}
+- Task File: ${getPaths().tasksFile}
 - Current working directory: ${config.workDir}
 `;
 
@@ -1354,7 +1361,7 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
   }
 
   const sessionFilePath = path.join(
-    CONFIG_DIR,
+    getPaths().configDir,
     "sessions",
     `${currentSessionId || Date.now()}.jsonl`,
   );
@@ -1939,8 +1946,9 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
 }
 
 function getPendingTasks() {
-  if (!fs.existsSync(TASKS_FILE)) return [];
-  const content = fs.readFileSync(TASKS_FILE, "utf8");
+  const { tasksFile } = getPaths();
+  if (!fs.existsSync(tasksFile)) return [];
+  const content = fs.readFileSync(tasksFile, "utf8");
   const matches = content.match(/- \[ \] (.*)/g);
   if (!matches) return [];
   const tasks = matches.map((m) => m.slice(6).trim());

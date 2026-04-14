@@ -3,21 +3,28 @@ import path from "path";
 import { spawn } from "child_process";
 import * as SESSIONS from "./sessions.js";
 
-const CONFIG_DIR = process.env.DUDE_CONFIG_DIR || process.cwd();
-const LOG_FILE = path.join(CONFIG_DIR, "agent.log");
-const TASKS_FILE = path.join(CONFIG_DIR, "tasks.md");
+const getPaths = () => {
+  const configDir = process.env.DUDE_CONFIG_DIR || process.cwd();
+  return {
+    configDir,
+    logFile: path.join(configDir, "agent.log"),
+    tasksFile: path.join(configDir, "tasks.md"),
+  };
+};
 
 function log(msg) {
+  const { logFile } = getPaths();
   const line = `[${new Date().toISOString()}] [AUDIT] ${msg}`;
   console.log(line);
   try {
-    fs.appendFileSync(LOG_FILE, line + "\n");
+    fs.appendFileSync(logFile, line + "\n");
   } catch (e) {}
 }
 
 function addTask(task) {
-  let content = fs.existsSync(TASKS_FILE)
-    ? fs.readFileSync(TASKS_FILE, "utf8")
+  const { tasksFile } = getPaths();
+  let content = fs.existsSync(tasksFile)
+    ? fs.readFileSync(tasksFile, "utf8")
     : "# Pending Tasks\n";
   
   // Check if task already exists as pending
@@ -33,7 +40,7 @@ function addTask(task) {
     "# Pending Tasks\n",
     `# Pending Tasks\n- [ ] ${task}\n`,
   );
-  fs.writeFileSync(TASKS_FILE, content);
+  fs.writeFileSync(tasksFile, content);
 }
 
 function findLogFile(session) {

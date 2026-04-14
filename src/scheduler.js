@@ -1,15 +1,22 @@
 import fs from "fs";
 import path from "path";
 
-const CONFIG_DIR = process.env.DUDE_CONFIG_DIR || process.cwd();
-const SCHEDULE_FILE = path.join(CONFIG_DIR, "schedule.json");
-const LOG_FILE = path.join(CONFIG_DIR, "agent.log");
+const getPaths = () => {
+  const configDir = process.env.DUDE_CONFIG_DIR || process.cwd();
+  return {
+    configDir,
+    scheduleFile: path.join(configDir, "schedule.json"),
+    logFile: path.join(configDir, "agent.log"),
+    sessionMapFile: path.join(configDir, "session-map.json"),
+  };
+};
 
 function log(msg) {
+  const { logFile } = getPaths();
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
   try {
-    fs.appendFileSync(LOG_FILE, line + "\n");
+    fs.appendFileSync(logFile, line + "\n");
   } catch (e) {}
 }
 
@@ -89,11 +96,12 @@ export function isQuotaError(output) {
 
 // Load scheduled tasks from file
 export function loadSchedule() {
-  if (!fs.existsSync(SCHEDULE_FILE)) {
+  const { scheduleFile } = getPaths();
+  if (!fs.existsSync(scheduleFile)) {
     return { paused: [], scheduled: [] };
   }
   try {
-    const content = fs.readFileSync(SCHEDULE_FILE, "utf8");
+    const content = fs.readFileSync(scheduleFile, "utf8");
     return JSON.parse(content);
   } catch (e) {
     log(`Error loading schedule: ${e.message}`);
@@ -103,7 +111,8 @@ export function loadSchedule() {
 
 // Save schedule to file
 export function saveSchedule(schedule) {
-  fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(schedule, null, 2));
+  const { scheduleFile } = getPaths();
+  fs.writeFileSync(scheduleFile, JSON.stringify(schedule, null, 2));
   log(`Schedule saved: ${schedule.paused.length} paused tasks, ${schedule.scheduled.length} scheduled tasks`);
 }
 
@@ -312,28 +321,28 @@ export function resumeSuspendedSession(sessionId) {
 
 // Store a session mapping for task resumption
 // This maps task names to session info for continuity
-const SESSION_MAP_FILE = path.join(CONFIG_DIR, 'session-map.json');
-
 export function storeSessionMapping(task, sessionInfo) {
+  const { sessionMapFile } = getPaths();
   let map = {};
-  if (fs.existsSync(SESSION_MAP_FILE)) {
+  if (fs.existsSync(sessionMapFile)) {
     try {
-      map = JSON.parse(fs.readFileSync(SESSION_MAP_FILE, 'utf8'));
+      map = JSON.parse(fs.readFileSync(sessionMapFile, 'utf8'));
     } catch (e) {
       log(`Error loading session map: ${e.message}`);
     }
   }
   map[task] = sessionInfo;
-  fs.writeFileSync(SESSION_MAP_FILE, JSON.stringify(map, null, 2));
+  fs.writeFileSync(sessionMapFile, JSON.stringify(map, null, 2));
   log(`Stored session mapping for task: ${task}, session: ${sessionInfo.sessionId}`);
 }
 
 export function getSessionMapping(task) {
-  if (!fs.existsSync(SESSION_MAP_FILE)) {
+  const { sessionMapFile } = getPaths();
+  if (!fs.existsSync(sessionMapFile)) {
     return null;
   }
   try {
-    const map = JSON.parse(fs.readFileSync(SESSION_MAP_FILE, 'utf8'));
+    const map = JSON.parse(fs.readFileSync(sessionMapFile, 'utf8'));
     return map[task] || null;
   } catch (e) {
     log(`Error loading session map: ${e.message}`);
@@ -342,13 +351,14 @@ export function getSessionMapping(task) {
 }
 
 export function clearSessionMapping(task) {
-  if (!fs.existsSync(SESSION_MAP_FILE)) {
+  const { sessionMapFile } = getPaths();
+  if (!fs.existsSync(sessionMapFile)) {
     return;
   }
   try {
-    const map = JSON.parse(fs.readFileSync(SESSION_MAP_FILE, 'utf8'));
+    const map = JSON.parse(fs.readFileSync(sessionMapFile, 'utf8'));
     delete map[task];
-    fs.writeFileSync(SESSION_MAP_FILE, JSON.stringify(map, null, 2));
+    fs.writeFileSync(sessionMapFile, JSON.stringify(map, null, 2));
   } catch (e) {
     log(`Error clearing session map: ${e.message}`);
   }
