@@ -9,13 +9,15 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node src/scheduler.test.js && node src/sessions.test.js && node src/index.test.js && node src/agent.acceptance.test.js && node test_audit.js && node test/scheduler-quota-test.js",
+    "test": "npm run test:unit && npm run test:acceptance && npm run test:audit && npm run test:quota && npm run test:safeguard",
+    "test:unit": "node src/scheduler.test.js && node src/sessions.test.js && node src/index.test.js",
     "test:scheduler": "node src/scheduler.test.js",
     "test:index": "node src/index.test.js",
     "test:sessions": "node src/sessions.test.js",
     "test:acceptance": "node src/agent.acceptance.test.js",
     "test:audit": "node test_audit.js",
-    "test:quota": "node test/scheduler-quota-test.js"
+    "test:quota": "node test/scheduler-quota-test.js",
+    "test:safeguard": "node test/tasks-safeguard.test.js"
   },
   "exports": {
     ".": "./src/index.js",
