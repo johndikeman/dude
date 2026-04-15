@@ -22,8 +22,20 @@ jobs:
     - name: Install dependencies
       run: npm ci
       
-    - name: Run tests
-      run: npm test
+    - name: Run unit tests
+      run: npm run test:unit
+      
+    - name: Run acceptance tests
+      run: npm run test:acceptance
+      
+    - name: Run audit tests
+      run: npm run test:audit
+      
+    - name: Run quota tests
+      run: npm run test:quota
+      
+    - name: Run safeguard tests
+      run: npm run test:safeguard
 
   deploy:
     runs-on: ubuntu-latest

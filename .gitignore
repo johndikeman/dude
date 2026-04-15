@@ -4,3 +4,6 @@ config.json
 tasks.md
 schedule.json
 agent.log
+test_acceptance/
+session-map.json
+sessions/

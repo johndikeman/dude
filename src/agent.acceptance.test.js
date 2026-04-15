@@ -13,6 +13,45 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const TEST_DIR = join(__dirname, "..", "test_acceptance");
 
+/**
+ * Safeguard logic from .pi/extensions/tasks-safeguard.ts
+ */
+function isValidEdit(oldText, newText) {
+  if (oldText.includes("[ ]") && newText === oldText.replace("[ ]", "[x]")) return true;
+  if (newText.startsWith(oldText)) {
+      const added = newText.slice(oldText.length);
+      if (isOnlyNewTasks(added)) return true;
+  }
+  if (newText.endsWith(oldText)) {
+      const added = newText.slice(0, newText.length - oldText.length);
+      if (isOnlyNewTasks(added)) return true;
+  }
+  return false;
+}
+function isOnlyNewTasks(text) {
+  const lines = text.split("\n").filter(l => l.trim() !== "");
+  return lines.every(line => line.trim().startsWith("- [ ]"));
+}
+function isValidWrite(oldContent, newContent) {
+  const oldLines = oldContent.split("\n").map(l => l.trim()).filter(l => l !== "");
+  const newLines = newContent.split("\n").map(l => l.trim()).filter(l => l !== "");
+  let oldIdx = 0;
+  for (let newIdx = 0; newIdx < newLines.length; newIdx++) {
+    if (oldIdx < oldLines.length) {
+      const oldLine = oldLines[oldIdx];
+      const newLine = newLines[newIdx];
+      if (oldLine === newLine) { oldIdx++; continue; }
+      if (oldLine.includes("[ ]") && newLine === oldLine.replace("[ ]", "[x]")) { oldIdx++; continue; }
+      if (newLine.startsWith("- [ ]")) { continue; }
+      return false;
+    } else {
+      const newLine = newLines[newIdx];
+      if (!newLine.startsWith("- [ ]") && newLine !== "" && !newLine.startsWith("#")) return false;
+    }
+  }
+  return oldIdx === oldLines.length;
+}
+
 if (!fs.existsSync(TEST_DIR)) fs.mkdirSync(TEST_DIR, { recursive: true });
 process.env.DUDE_CONFIG_DIR = TEST_DIR;
 
@@ -226,6 +265,30 @@ await test("SCENARIO 12: Discord fallback notifications", async () => {
   const discord = new MockDiscord();
   await runCycle({ discordClient: discord, initialMessage: await discord.send("ch", "Start"), simulation: { shouldFailQuota: true } });
   assert(discord.messages.some(m => m.content.includes("Fallback")));
+});
+
+await test("SCENARIO 13: Tasks safeguard compliance - valid edit", async () => {
+  setup();
+  addTask("Task 1");
+  const oldContent = "- [ ] Task 1";
+  const newContent = "- [x] Task 1";
+  assert(isValidEdit(oldContent, newContent), "Crossing off task should be allowed");
+});
+
+await test("SCENARIO 14: Tasks safeguard compliance - valid write", async () => {
+  setup();
+  addTask("Task 1");
+  const oldContent = fs.readFileSync(join(TEST_DIR, "tasks.md"), "utf8");
+  const newContent = oldContent.replace("[ ] Task 1", "[x] Task 1") + "- [ ] Task 2\n";
+  assert(isValidWrite(oldContent, newContent), "Crossing off and adding should be allowed");
+});
+
+await test("SCENARIO 15: Tasks safeguard compliance - invalid write blocked", async () => {
+  setup();
+  addTask("Task 1");
+  const oldContent = fs.readFileSync(join(TEST_DIR, "tasks.md"), "utf8");
+  const newContent = "# Cleared\n";
+  assert(!isValidWrite(oldContent, newContent), "Clearing tasks should be blocked");
 });
 
 console.log("\n" + "=".repeat(70) + `\nRESULTS: ${passed} passed, ${failed} failed\n` + "=".repeat(70));
