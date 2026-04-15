@@ -1,25 +1,32 @@
 import fs from "fs";
 import path from "path";
 
-const CONFIG_DIR = process.env.DUDE_CONFIG_DIR || process.cwd();
-const SESSIONS_FILE = path.join(CONFIG_DIR, "sessions.json");
-const LOG_FILE = path.join(CONFIG_DIR, "agent.log");
+const getPaths = () => {
+  const configDir = process.env.DUDE_CONFIG_DIR || process.cwd();
+  return {
+    configDir,
+    sessionsFile: path.join(configDir, "sessions.json"),
+    logFile: path.join(configDir, "agent.log"),
+  };
+};
 
 function log(msg) {
+  const { logFile } = getPaths();
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
   try {
-    fs.appendFileSync(LOG_FILE, line + "\n");
+    fs.appendFileSync(logFile, line + "\n");
   } catch (e) {}
 }
 
 // Load sessions from file
 export function loadSessions() {
-  if (!fs.existsSync(SESSIONS_FILE)) {
+  const { sessionsFile } = getPaths();
+  if (!fs.existsSync(sessionsFile)) {
     return { active: [], completed: [] };
   }
   try {
-    const content = fs.readFileSync(SESSIONS_FILE, "utf8");
+    const content = fs.readFileSync(sessionsFile, "utf8");
     return JSON.parse(content);
   } catch (e) {
     log(`Error loading sessions: ${e.message}`);
@@ -29,7 +36,8 @@ export function loadSessions() {
 
 // Save sessions to file
 export function saveSessions(sessions) {
-  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
+  const { sessionsFile } = getPaths();
+  fs.writeFileSync(sessionsFile, JSON.stringify(sessions, null, 2));
 }
 
 // Create a new session entry
