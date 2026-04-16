@@ -68,7 +68,7 @@ async function runTests() {
 
     const sessionDir = path.join(SESSIONS_DIR, "--home-ubuntu-dude-workspace--");
     fs.mkdirSync(sessionDir, { recursive: true });
-    const logFile = path.join(sessionDir, `${new Date().toISOString().replace(/:/g, "-")}-000Z.jsonl`);
+    const logFile = path.join(sessionDir, `${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`);
     fs.writeFileSync(logFile, "{}");
 
     await AUDIT.runAudit("m", "p");
