@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "npm run test:unit && npm run test:acceptance && npm run test:audit && npm run test:quota && npm run test:safeguard",
-    "test:unit": "node src/scheduler.test.js && node src/sessions.test.js && node src/index.test.js",
+    "test:unit": "node src/scheduler.test.js && node src/sessions.test.js && node src/index.test.js && node src/audit.test.js",
     "test:scheduler": "node src/scheduler.test.js",
     "test:index": "node src/index.test.js",
     "test:sessions": "node src/sessions.test.js",

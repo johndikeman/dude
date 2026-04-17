@@ -77,10 +77,10 @@ function findLogFile(session) {
   const closest = files
     .filter((f) => f.endsWith(".jsonl"))
     .map((f) => {
-      const match = f.match(/^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)/);
+      const match = f.match(/^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}[-.]\d{3}Z)/);
       if (!match) return null;
       const timeStr = match[1];
-      const parts = timeStr.replace("Z", "").split(/[T-]/);
+      const parts = timeStr.replace("Z", "").split(/[T\-:.]/);
       const d = new Date(Date.UTC(
         parseInt(parts[0], 10),
         parseInt(parts[1], 10) - 1,
