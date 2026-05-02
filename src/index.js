@@ -138,6 +138,12 @@ const commands = [
         .setName("description")
         .setDescription("The task description")
         .setRequired(true),
+    )
+    .addAttachmentOption((option) =>
+      option
+        .setName("file")
+        .setDescription("Optional text file to add as part of the task")
+        .setRequired(false),
     ),
   new SlashCommandBuilder()
     .setName("tasks")
@@ -526,9 +532,43 @@ client.on("interactionCreate", async (interaction) => {
   const { commandName, options } = interaction;
 
   if (commandName === "task") {
-    const task = options.getString("description");
+    let task = options.getString("description");
+    const attachment = options.getAttachment("file");
+
+    if (attachment) {
+      // Allow various text-based files
+      const isText =
+        attachment.contentType?.startsWith("text/") ||
+        [".txt", ".md", ".js", ".ts", ".py", ".json", ".c", ".cpp", ".h"].some(
+          (ext) => attachment.name.toLowerCase().endsWith(ext),
+        );
+
+      if (isText) {
+        try {
+          const response = await fetch(attachment.url);
+          if (!response.ok)
+            throw new Error(`Failed to download file: ${response.statusText}`);
+          const text = await response.text();
+          task += `\n\nFile content (${attachment.name}):\n${text}`;
+        } catch (err) {
+          log(`Error downloading attachment: ${err.message}`);
+          await interaction.reply({
+            content: `Error downloading attachment: ${err.message}`,
+            ephemeral: true,
+          });
+          return;
+        }
+      } else {
+        await interaction.reply({
+          content: "Please attach a text file.",
+          ephemeral: true,
+        });
+        return;
+      }
+    }
+
     addTask(task);
-    await interaction.reply(`Task added: ${task}`);
+    await interaction.reply(`Task added: ${truncate(task, 100)}`);
 
     // If autoNext is enabled, start working if not already running
     if (config.autoNext && !isRunning) {
@@ -1122,9 +1162,21 @@ function addTask(task) {
   if (!content.includes("# Pending Tasks")) {
     content = "# Pending Tasks\n" + content;
   }
+
+  // Ensure there's a newline after the header for matching
+  if (!content.includes("# Pending Tasks\n")) {
+    content = content.replace("# Pending Tasks", "# Pending Tasks\n");
+  }
+
+  // For multi-line tasks, indent subsequent lines to keep them in the list item
+  const lines = task.split("\n");
+  const formattedTask = lines
+    .map((line, index) => (index === 0 ? line : "  " + line))
+    .join("\n");
+
   content = content.replace(
     "# Pending Tasks\n",
-    `# Pending Tasks\n- [ ] ${task}\n`,
+    `# Pending Tasks\n- [ ] ${formattedTask}\n`,
   );
   fs.writeFileSync(tasksFile, content);
 }
@@ -1135,10 +1187,16 @@ function removeTaskFromPending(task) {
   let content = fs.readFileSync(tasksFile, "utf8");
   const originalContent = content;
 
+  // Re-indent for multi-line tasks to match how they are stored
+  const formattedTask = task
+    .split("\n")
+    .map((line, index) => (index === 0 ? line : "  " + line))
+    .join("\n");
+
   // Remove the specific task from pending tasks
   content = content.replace(
     new RegExp(
-      `- \\[ \\] ${task.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n?`,
+      `- \\[ \\] ${formattedTask.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n?`,
       "s",
     ),
     "",
@@ -1148,8 +1206,8 @@ function removeTaskFromPending(task) {
   content = content.replace("# Pending Tasks\n\n", "# Pending Tasks\n");
 
   if (content !== originalContent) {
-    fs.writeFileSync(TASKS_FILE, content);
-    log(`Removed task from pending: ${task}`);
+    fs.writeFileSync(tasksFile, content);
+    log(`Removed task from pending: ${truncate(task, 50)}`);
     return true;
   }
   return false;
@@ -1214,6 +1272,8 @@ async function runCycle(interaction, initialStatusMessage = null) {
     const errorMsg = "Could not obtain API key for Gemini.";
     if (interaction) interaction.followUp(errorMsg);
     log(errorMsg);
+    isRunning = false;
+    currentRunningTask = null;
     return;
   }
 
@@ -1334,27 +1394,16 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
       });
       currentSessionId = existingSessionId;
       log(`Resumed session ${currentSessionId} for task: ${task}`);
+    } else if (isFallbackRetry && previousSessionId) {
+      currentSessionId = previousSessionId;
+      log(`Continuing session ${currentSessionId} for fallback retry: ${task}`);
     } else {
-      const session = SESSIONS.createSession(task, {
-        discordMessageId: statusMessage ? statusMessage.id : null,
-        discordChannelId: statusMessage ? statusMessage.channelId : null,
-        workspacePath: config.workDir,
-        prompt: prompt.substring(0, 2000), // Store prompt snippet
-      });
-      currentSessionId = session.id;
-      log(`Created session ${currentSessionId} for task: ${task}`);
-    }
-
-    // Only create new session if we're not continuing from a previous one
-    if (!isFallbackRetry || !previousSessionId) {
+      // Create a new session
       const session = SESSIONS.createSession(task, sessionOptions);
       currentSessionId = session.id;
       log(
         `Created session ${currentSessionId} for task: ${task}${isFallbackRetry ? " (fallback retry, no previous session)" : ""}`,
       );
-    } else {
-      currentSessionId = previousSessionId;
-      log(`Continuing session ${currentSessionId} for fallback retry: ${task}`);
     }
   } catch (e) {
     log(`Failed to manage session: ${e.message}`);
@@ -1949,9 +1998,33 @@ function getPendingTasks() {
   const { tasksFile } = getPaths();
   if (!fs.existsSync(tasksFile)) return [];
   const content = fs.readFileSync(tasksFile, "utf8");
-  const matches = content.match(/- \[ \] (.*)/g);
-  if (!matches) return [];
-  const tasks = matches.map((m) => m.slice(6).trim());
+
+  const tasks = [];
+  const lines = content.split(/\r?\n/);
+  let currentTask = null;
+
+  for (const line of lines) {
+    if (line.startsWith("- [ ] ")) {
+      if (currentTask !== null) {
+        tasks.push(currentTask.trim());
+      }
+      currentTask = line.slice(6);
+    } else if (line.startsWith("- [x] ") || line.startsWith("#")) {
+      if (currentTask !== null) {
+        tasks.push(currentTask.trim());
+        currentTask = null;
+      }
+    } else if (currentTask !== null) {
+      // If it's an indented line or even if it's not, as long as we're in a task
+      // and haven't hit another task marker or header, it's part of the task.
+      // We un-indent it if it was indented by two spaces.
+      currentTask += "\n" + line.replace(/^  /, "");
+    }
+  }
+  if (currentTask !== null) {
+    tasks.push(currentTask.trim());
+  }
+
   return [...new Set(tasks)];
 }
 
@@ -2018,8 +2091,8 @@ Only output the status line starting with [STATUS]. Use lowercase writing and a 
 function isValidStatus(status) {
   if (!status || status.length < 3) return false;
 
-  // Status should start with lowercase letter (as per instructions)
-  if (!/^[a-z]/.test(status)) return false;
+  // Status should start with a letter
+  if (!/^[a-zA-Z]/.test(status)) return false;
 
   // Avoid instructional text from the prompt
   const instructionalPatterns = [
