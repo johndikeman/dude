@@ -5,12 +5,12 @@
 import "dotenv/config";
 import fs from "fs";
 import path from "path";
-import { 
-  InterfaceManager, 
-  DiscordInterface, 
-  GitHubInterface, 
+import {
+  InterfaceManager,
+  DiscordInterface,
+  GitHubInterface,
   LichessInterface,
-  ManagerAgent
+  ManagerAgent,
 } from "./modular-agent.js";
 
 import * as SCHEDULER from "./scheduler.js";
@@ -66,12 +66,12 @@ class DudeApp {
 
     // 3. Start all interfaces
     await this.interfaceManager.startAll();
-    
+
     // Register Discord commands if needed
     if (discord.isActive) {
       await discord.registerCommands();
     }
-    
+
     // Start polling for interfaces that need it
     github.startPolling();
     lichess.startPolling();
@@ -99,7 +99,9 @@ class DudeApp {
         if (tasks.length === 0) {
           await interaction.reply("No pending tasks.");
         } else {
-          await interaction.reply(`**Pending Tasks:**\n${tasks.map((t, i) => `${i + 1}. ${t.substring(0, 100)}`).join("\n")}`);
+          await interaction.reply(
+            `**Pending Tasks:**\n${tasks.map((t, i) => `${i + 1}. ${t.substring(0, 100)}`).join("\n")}`,
+          );
         }
         return true;
 
@@ -108,7 +110,9 @@ class DudeApp {
         if (sessions.length === 0) {
           await interaction.reply("No active sessions.");
         } else {
-          await interaction.reply(`**Active Sessions:**\n${sessions.map(s => `[${s.sessionId}] ${s.task.substring(0, 50)} (${s.phase})`).join("\n")}`);
+          await interaction.reply(
+            `**Active Sessions:**\n${sessions.map((s) => `[${s.sessionId}] ${s.task.substring(0, 50)} (${s.phase})`).join("\n")}`,
+          );
         }
         return true;
 
@@ -118,7 +122,7 @@ class DudeApp {
           `**Dude Agent Status**`,
           `Active Sessions: ${this.activeManagerSessions.size}`,
           `Pending Tasks: ${this.getPendingTasks().length}`,
-          `Paused Tasks: ${paused.length}`
+          `Paused Tasks: ${paused.length}`,
         ];
         if (paused.length > 0) {
           statusLines.push(`Next resumption: ${paused[0].resumeAt}`);
@@ -130,7 +134,9 @@ class DudeApp {
         const newDir = options.getString("path");
         if (fs.existsSync(newDir)) {
           process.env.DUDE_WORK_DIR = path.resolve(newDir);
-          await interaction.reply(`Working directory updated to: ${process.env.DUDE_WORK_DIR}`);
+          await interaction.reply(
+            `Working directory updated to: ${process.env.DUDE_WORK_DIR}`,
+          );
         } else {
           await interaction.reply(`Directory does not exist: ${newDir}`);
         }
@@ -140,7 +146,9 @@ class DudeApp {
         await interaction.deferReply();
         try {
           // This would need a modular implementation of audit.js
-          await interaction.editReply("Self-audit not yet implemented in modular architecture.");
+          await interaction.editReply(
+            "Self-audit not yet implemented in modular architecture.",
+          );
         } catch (err) {
           await interaction.editReply(`Audit failed: ${err.message}`);
         }
@@ -152,7 +160,7 @@ class DudeApp {
   getPendingTasks() {
     const { tasksFile } = getPaths();
     if (!fs.existsSync(tasksFile)) return [];
-    
+
     const content = fs.readFileSync(tasksFile, "utf8");
     const tasks = [];
     const lines = content.split("\n");
@@ -185,11 +193,11 @@ class DudeApp {
         const content = fs.readFileSync(messageQueueFile, "utf8");
         fs.writeFileSync(messageQueueFile, ""); // Clear queue
 
-        const lines = content.split("\n").filter(l => l.trim());
+        const lines = content.split("\n").filter((l) => l.trim());
         for (const line of lines) {
           const entry = JSON.parse(line);
           log(`Message from queue: ${entry.message}`);
-          
+
           if (entry.sessionId) {
             const manager = this.activeManagerSessions.get(entry.sessionId);
             if (manager) {
@@ -210,13 +218,13 @@ class DudeApp {
   startSchedulerPolling() {
     setInterval(async () => {
       const ready = SCHEDULER.getReadyTasks();
-      
+
       if (ready.paused.length > 0) {
         for (const task of ready.paused) {
           log(`Resuming paused task: ${task.task}`);
           await this.resumePausedTask(task);
         }
-        SCHEDULER.removeCompletedTasks(ready.paused.map(t => t.id));
+        SCHEDULER.removeCompletedTasks(ready.paused.map((t) => t.id));
       }
 
       if (ready.scheduled.length > 0) {
@@ -224,7 +232,7 @@ class DudeApp {
           log(`Running scheduled task: ${task.task}`);
           await this.handleNewTask(task.task, { sourceInterface: "discord" }); // Default to discord
         }
-        SCHEDULER.removeCompletedTasks(ready.scheduled.map(t => t.id));
+        SCHEDULER.removeCompletedTasks(ready.scheduled.map((t) => t.id));
       }
     }, 60000); // Check every minute
   }
@@ -232,32 +240,37 @@ class DudeApp {
   async resumePausedTask(task) {
     const { sessionInfo } = task;
     const sessionId = sessionInfo?.sessionId || task.id;
-    
+
     // Check if we already have this session active
     let manager = this.activeManagerSessions.get(sessionId);
-    
+
     if (manager) {
       await manager.resume("Quota reset. Please continue with the task.");
     } else {
       log(`Re-creating manager for session ${sessionId}`);
-      await this.handleNewTask(task.task, { 
+      await this.handleNewTask(task.task, {
         sessionId,
         ...sessionInfo,
-        sourceInterface: sessionInfo?.sourceInterface || "discord"
+        sourceInterface: sessionInfo?.sourceInterface || "discord",
       });
     }
   }
 
   setupHandlers() {
     // Handle new tasks from any interface
-    this.interfaceManager.getAll().forEach(iface => {
+    this.interfaceManager.getAll().forEach((iface) => {
       iface.onTaskReceived(async (task, options) => {
         log(`Received task from ${iface.name}: ${task.substring(0, 50)}...`);
-        await this.handleNewTask(task, { ...options, sourceInterface: iface.name });
+        await this.handleNewTask(task, {
+          ...options,
+          sourceInterface: iface.name,
+        });
       });
 
       iface.onFeedbackReceived(async (feedback, context) => {
-        log(`Received feedback from ${iface.name} for session ${context.sessionId}`);
+        log(
+          `Received feedback from ${iface.name} for session ${context.sessionId}`,
+        );
         await this.handleFeedback(feedback, context);
       });
     });
@@ -267,6 +280,7 @@ class DudeApp {
     const sessionId = options.sessionId || `manager-${Date.now()}`;
     const workspacePath = process.env.DUDE_WORK_DIR || process.cwd();
 
+    // TODO: this is basically a bug no
     if (this.activeManagerSessions.has(sessionId)) {
       log(`Session ${sessionId} already active, not creating new one`);
       return;
@@ -280,8 +294,14 @@ class DudeApp {
       workspacePath,
       githubInterface: this.interfaceManager.get("github"),
       sourceInterface: options.sourceInterface,
-      discordMessageId: options.discordMessageId || options.interaction?.id || options.messageId,
-      discordChannelId: options.discordChannelId || options.interaction?.channelId || options.channelId,
+      discordMessageId:
+        options.discordMessageId ||
+        options.interaction?.id ||
+        options.messageId,
+      discordChannelId:
+        options.discordChannelId ||
+        options.interaction?.channelId ||
+        options.channelId,
       onStatusUpdate: (status) => {
         // Update status in the source interface if supported
         const iface = this.interfaceManager.get(options.sourceInterface);
@@ -295,10 +315,12 @@ class DudeApp {
       onQuotaExhausted: (quotaInfo) => {
         log(`Quota exhausted for session ${sessionId}, pausing task`);
         SCHEDULER.pauseTask(task, quotaInfo, manager.getSessionInfo());
-        
+
         const iface = this.interfaceManager.get(options.sourceInterface);
         if (iface) {
-          iface.sendMessage(`Task paused due to quota exhaustion. Will resume in approximately ${Math.round(quotaInfo.resetAfterMs / 60000)} minutes.`);
+          iface.sendMessage(
+            `Task paused due to quota exhaustion. Will resume in approximately ${Math.round(quotaInfo.resetAfterMs / 60000)} minutes.`,
+          );
         }
       },
       messageCallback: async (type, message, data) => {
@@ -311,16 +333,16 @@ class DudeApp {
             // so we can identify replies to it.
             storeMessageId: true,
           });
-          
+
           if (sentMessage && sentMessage.id) {
             iface.storeSessionMessageId(sessionId, sentMessage.id);
           }
         }
-      }
+      },
     });
 
     this.activeManagerSessions.set(sessionId, manager);
-    
+
     try {
       await manager.run();
     } catch (err) {
@@ -344,7 +366,7 @@ class DudeApp {
 }
 
 const app = new DudeApp();
-app.start().catch(err => {
+app.start().catch((err) => {
   console.error("Fatal error starting app:", err);
   process.exit(1);
 });

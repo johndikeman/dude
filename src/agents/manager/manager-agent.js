@@ -37,14 +37,14 @@ export class ManagerAgent extends AgentSessionWrapper {
       `${options.sessionId}.jsonl`,
     );
     super(options.sessionId, sessionFile, options);
-    
+
     this.task = options.task;
     this.discordMessageId = options.discordMessageId;
     this.discordChannelId = options.discordChannelId;
     this.workspacePath = options.workspacePath || process.cwd();
     this.statusCallback = options.statusCallback || (() => {});
     this.messageCallback = options.messageCallback || (() => {});
-    
+
     this.workerAgents = new Map(); // sessionId -> SubAgent
     this.activeWorker = null;
     this.plan = null;
@@ -61,23 +61,31 @@ export class ManagerAgent extends AgentSessionWrapper {
    * Run the manager agent workflow
    */
   async run() {
+    // TODO: manager should handle setting up the repo required for the task if its not present, give it access to git/gh commands.
     log(`Manager agent starting for task: ${this.task}`);
-    
+
     // Register manager-specific tools
     const planReadyTool = defineTool({
       name: "plan_ready",
-      description: "Submit the developed plan and acceptance criteria for approval",
+      description:
+        "Submit the developed plan and acceptance criteria for approval",
       parameters: Type.Object({
         plan: Type.String({ description: "Detailed implementation plan" }),
-        acceptanceCriteria: Type.String({ description: "Clear, measurable criteria for task completion" }),
-        workDirectories: Type.Array(Type.String(), { description: "Directories the worker agent should have access to" }),
+        acceptanceCriteria: Type.String({
+          description: "Clear, measurable criteria for task completion",
+        }),
+        workDirectories: Type.Array(Type.String(), {
+          description: "Directories the worker agent should have access to",
+        }),
       }),
       execute: async (args) => {
         this.plan = { summary: args.plan };
         this.acceptanceCriteria = args.acceptanceCriteria;
         this.workDirectories = args.workDirectories;
         await this.notifyPlanReady();
-        return { content: [{ type: "text", text: "Plan submitted for approval." }] };
+        return {
+          content: [{ type: "text", text: "Plan submitted for approval." }],
+        };
       },
     });
 
@@ -100,18 +108,28 @@ export class ManagerAgent extends AgentSessionWrapper {
       execute: async (args) => {
         if (this.activeWorker) {
           await this.activeWorker.resume(args.feedback);
-          return { content: [{ type: "text", text: "Worker agent resumed with feedback." }] };
+          return {
+            content: [
+              { type: "text", text: "Worker agent resumed with feedback." },
+            ],
+          };
         } else {
-          return { content: [{ type: "text", text: "No active worker to resume." }], isError: true };
+          return {
+            content: [{ type: "text", text: "No active worker to resume." }],
+            isError: true,
+          };
         }
       },
     });
 
     const messageUserTool = defineTool({
       name: "message_user",
-      description: "Send a message to the user for feedback, clarification, or updates",
+      description:
+        "Send a message to the user for feedback, clarification, or updates",
       parameters: Type.Object({
-        message: Type.String({ description: "The message to send to the user" }),
+        message: Type.String({
+          description: "The message to send to the user",
+        }),
       }),
       execute: async (args) => {
         await this.notifyUser(args.message);
@@ -137,74 +155,19 @@ You have READ-ONLY access to the codebase for research.
 Use [STATUS] prefix to indicate your progress.
 `;
 
-    const readOnlyTools = createCodingTools(this.workspacePath).filter(tool => 
-      ["read", "bash", "ls", "grep", "find"].includes(tool.name)
+    const readOnlyTools = createCodingTools(this.workspacePath).filter((tool) =>
+      ["read", "bash", "ls", "grep", "find"].includes(tool.name),
     );
 
     return await super.start(prompt, {
       tools: readOnlyTools,
-      customTools: [planReadyTool, startWorkerTool, resumeWorkerTool, messageUserTool],
+      customTools: [
+        planReadyTool,
+        startWorkerTool,
+        resumeWorkerTool,
+        messageUserTool,
+      ],
     });
-  }
-
-  /**
-   * Phase 1: Create a plan for the task
-   */
-  async runPlanPhase() {
-    const planPrompt = `You are a manager agent responsible for planning how to implement the following task:
-
-${this.task}
-
-Your job is to:
-1. Analyze the task requirements
-2. Research the codebase if needed
-3. Develop a detailed implementation plan
-4. Define clear acceptance criteria
-
-Output your plan in this format:
---- PLAN ---
-[Your detailed plan here]
---- ACCEPTANCE CRITERIA ---
-[Clear, measurable criteria for task completion]
---- WORKING DIRECTORIES ---
-[Directories the worker agent should have access to]
---- END ---
-
-Use bash tools to explore the codebase as needed.
-Remember to use [STATUS] prefix to indicate your progress.
-When ready, call the plan_ready tool to submit your plan.
-`;
-
-    // For now, we'd use pi AgentSession API here
-    // This is a simplified version using bash exploration
-    log("Creating plan for task");
-    
-    try {
-      // Explore the codebase
-      const repoStructure = await this.exploreCodebase();
-      
-      this.plan = {
-        summary: `Implement: ${this.task.substring(0, 50)}...`,
-        steps: ["Initial plan created"],
-        requiresResearch: true,
-        estimatedTime: "unknown",
-        codebaseSnapshot: repoStructure.substring(0, 2000),
-      };
-      
-      this.acceptanceCriteria = `Task "${this.task}" should be completed according to the plan.
-- All requirements from the task description must be addressed
-- Code should follow existing patterns
-- Tests should be added for new functionality
-- Documentation should be updated`;
-
-      this.workDirectories = [this.workspacePath];
-      
-      log("Plan phase complete");
-      return { plan: this.plan, acceptanceCriteria: this.acceptanceCriteria };
-    } catch (err) {
-      log(`Error in plan phase: ${err.message}`);
-      throw err;
-    }
   }
 
   /**
@@ -233,12 +196,11 @@ Reply to this message to approve the plan and start implementation.`;
     log("Plan ready notification sent");
   }
 
-  /**
-   * Phase 3: Run worker agent with our plan
-   */
   async runWorkerPhase() {
     if (!this.plan || !this.acceptanceCriteria) {
-      throw new Error("Plan and acceptance criteria must be set before starting worker");
+      throw new Error(
+        "Plan and acceptance criteria must be set before starting worker",
+      );
     }
 
     // Create a worker agent
@@ -260,7 +222,7 @@ Reply to this message to approve the plan and start implementation.`;
       workspacePath: this.workspacePath,
       onStatusUpdate: (status) => {
         this.setStatus(`Worker: ${status}`);
-      }
+      },
     });
 
     this.workerAgents.set(workerSessionId, worker);
@@ -270,8 +232,18 @@ Reply to this message to approve the plan and start implementation.`;
     // Setup extensions
     const extensions = [];
     if (this.githubInterface) {
-      extensions.push(GitHubExtensions.createPRLinkExtension(workerSessionId, this.githubInterface));
-      extensions.push(GitHubExtensions.createPRCommentExtension(workerSessionId, this.githubInterface));
+      extensions.push(
+        GitHubExtensions.createPRLinkExtension(
+          workerSessionId,
+          this.githubInterface,
+        ),
+      );
+      extensions.push(
+        GitHubExtensions.createPRCommentExtension(
+          workerSessionId,
+          this.githubInterface,
+        ),
+      );
     }
 
     // Start the worker
@@ -301,12 +273,12 @@ Reply to this message to approve the plan and start implementation.`;
 
     // Get worker output
     const workerOutput = this.activeWorker.getOutput();
-    
+
     log("Evaluating worker results...");
 
     // Simple evaluation logic
     const success = this.evaluateResults(workerOutput);
-    
+
     if (success) {
       this.phase = "complete";
       this.setStatus("worker completed successfully");
@@ -314,7 +286,7 @@ Reply to this message to approve the plan and start implementation.`;
     } else {
       this.phase = "revise";
       this.setStatus("worker output needs revision");
-      
+
       // Resume worker with feedback
       const feedback = `The previous implementation did not fully meet the acceptance criteria. Please review and improve:
 
@@ -336,9 +308,15 @@ ${workerOutput.substring(0, 3000)}`;
    */
   evaluateResults(workerOutput) {
     // Check for key indicators of completion
-    const hasCompletion = /task complete|finished|done|implemente[d]?/i.test(workerOutput);
-    const hasPrCreated = /pull request|pr created|opened pr/i.test(workerOutput);
-    const hasNoErrors = !/error|failed|exception/i.test(workerOutput) || /error handling/i.test(workerOutput);
+    const hasCompletion = /task complete|finished|done|implemente[d]?/i.test(
+      workerOutput,
+    );
+    const hasPrCreated = /pull request|pr created|opened pr/i.test(
+      workerOutput,
+    );
+    const hasNoErrors =
+      !/error|failed|exception/i.test(workerOutput) ||
+      /error handling/i.test(workerOutput);
 
     // Simple heuristic - in production, use AI for better evaluation
     return hasCompletion && (hasPrCreated || hasNoErrors);
@@ -349,7 +327,7 @@ ${workerOutput.substring(0, 3000)}`;
    */
   async receiveSubAgentResult(result) {
     log(`Received result from worker ${result.sessionId}`);
-    
+
     // Resume manager session with worker results for evaluation
     const evaluationPrompt = `WORKER COMPLETED.
 Summary of work: ${result.summary}
@@ -362,12 +340,16 @@ ${this.acceptanceCriteria}
 If it's good, send a final message to the user.
 If it needs revisions, call resume_worker with your feedback.
 `;
-    
+
     await this.resume(evaluationPrompt);
 
     // Notify through callback
     if (this.messageCallback) {
-      await this.messageCallback("worker_completed", "Worker completed: " + (result.status || result.output?.substring(0, 200)));
+      await this.messageCallback(
+        "worker_completed",
+        "Worker completed: " +
+          (result.status || result.output?.substring(0, 200)),
+      );
     }
 
     return true;
@@ -379,30 +361,6 @@ If it needs revisions, call resume_worker with your feedback.
   async notifyUser(message) {
     if (this.messageCallback) {
       await this.messageCallback("user_message", message);
-    }
-  }
-
-  /**
-   * Explore the codebase
-   */
-  async exploreCodebase() {
-    try {
-      const { exec: execCmd } = await import("child_process");
-      return new Promise((resolve, reject) => {
-        execCmd("ls -la && find . -maxdepth 2 -type f -name '*.js' | head -20", {
-          cwd: this.workspacePath,
-          timeout: 10000,
-        }, (error, stdout, stderr) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve(stdout || stderr);
-          }
-        });
-      });
-    } catch (err) {
-      log(`Error exploring codebase: ${err.message}`);
-      return "Unable to explore codebase";
     }
   }
 
