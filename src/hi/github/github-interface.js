@@ -260,6 +260,24 @@ export class GitHubInterface extends HumanInterface {
   }
 
   /**
+   * Clone a GitHub repository
+   * @param {string} repo - The repository to clone (e.g. "owner/repo")
+   * @param {string} [dest] - Destination directory
+   * @returns {Promise<string>} Output of clone command
+   */
+  async cloneRepo(repo, dest) {
+    try {
+      const destArg = dest ? ` ${dest}` : "";
+      const output = await execAsync(`gh repo clone ${repo}${destArg}`);
+      log(`Cloned repository ${repo}${dest ? ` to ${dest}` : ""}`);
+      return output;
+    } catch (err) {
+      log(`Failed to clone repository ${repo}: ${err.message}`);
+      throw err;
+    }
+  }
+
+  /**
    * Start polling for interactions
    */
   startPolling() {

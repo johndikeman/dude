@@ -280,7 +280,6 @@ class DudeApp {
     const sessionId = options.sessionId || `manager-${Date.now()}`;
     const workspacePath = process.env.DUDE_WORK_DIR || process.cwd();
 
-    // TODO: this is basically a bug no
     if (this.activeManagerSessions.has(sessionId)) {
       log(`Session ${sessionId} already active, not creating new one`);
       return;

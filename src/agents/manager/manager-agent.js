@@ -61,7 +61,6 @@ export class ManagerAgent extends AgentSessionWrapper {
    * Run the manager agent workflow
    */
   async run() {
-    // TODO: manager should handle setting up the repo required for the task if its not present, give it access to git/gh commands.
     log(`Manager agent starting for task: ${this.task}`);
 
     // Register manager-specific tools
@@ -137,19 +136,66 @@ export class ManagerAgent extends AgentSessionWrapper {
       },
     });
 
+    const customTools = [
+      planReadyTool,
+      startWorkerTool,
+      resumeWorkerTool,
+      messageUserTool,
+    ];
+
+    // Add GitHub tools if interface is available
+    if (this.githubInterface) {
+      customTools.push(
+        defineTool({
+          name: "gh_fetch_open_prs",
+          description: "Fetch open pull requests from the repository",
+          parameters: Type.Object({}),
+          execute: async () => {
+            const prs = await this.githubInterface.fetchOpenPRs();
+            return { content: [{ type: "text", text: JSON.stringify(prs, null, 2) }] };
+          },
+        }),
+        defineTool({
+          name: "gh_fetch_pr_comments",
+          description: "Fetch comments from a specific pull request",
+          parameters: Type.Object({
+            pr_number: Type.Number({ description: "The PR number" }),
+          }),
+          execute: async ({ pr_number }) => {
+            const comments = await this.githubInterface.fetchPRComments(pr_number);
+            return { content: [{ type: "text", text: JSON.stringify(comments, null, 2) }] };
+          },
+        }),
+        defineTool({
+          name: "gh_clone_repo",
+          description: "Clone a GitHub repository to a specific directory",
+          parameters: Type.Object({
+            repo: Type.String({ description: "The repository to clone (e.g. 'owner/repo')" }),
+            directory: Type.Optional(Type.String({ description: "Optional destination directory name" })),
+          }),
+          execute: async ({ repo, directory }) => {
+            const result = await this.githubInterface.cloneRepo(repo, directory);
+            return { content: [{ type: "text", text: result || `Successfully cloned ${repo}` }] };
+          },
+        })
+      );
+    }
+
     const prompt = `You are a manager agent responsible for planning and coordinating the following task:
 
 ${this.task}
 
 Your job is to:
 1. Research the codebase to understand requirements.
-2. Develop a detailed implementation plan.
-3. Define clear acceptance criteria.
-4. Once ready, call plan_ready to submit your plan for approval.
-5. Once approved (you will receive a message), call start_worker to begin implementation.
-6. After the worker completes, evaluate their results.
+2. If the task requires a repository that is not currently present, use gh_clone_repo to clone it.
+3. Develop a detailed implementation plan.
+4. Define clear acceptance criteria.
+5. Once ready, call plan_ready to submit your plan for approval.
+6. Once approved (you will receive a message), call start_worker to begin implementation.
+7. After the worker completes, evaluate their results.
 
 You can use message_user at any time to ask for clarification or provide updates.
+${this.githubInterface ? "You can use gh_* tools to interact with GitHub (fetching PRs, cloning repos) if relevant to the task." : ""}
 
 You have READ-ONLY access to the codebase for research.
 Use [STATUS] prefix to indicate your progress.
@@ -161,12 +207,7 @@ Use [STATUS] prefix to indicate your progress.
 
     return await super.start(prompt, {
       tools: readOnlyTools,
-      customTools: [
-        planReadyTool,
-        startWorkerTool,
-        resumeWorkerTool,
-        messageUserTool,
-      ],
+      customTools,
     });
   }
 
