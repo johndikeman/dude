@@ -20,6 +20,7 @@ export class HumanInterface {
 
   /**
    * Initialize the interface
+   * @returns {Promise<void>}
    */
   async init() {
     throw new Error("Subclass must implement init()");
@@ -27,6 +28,7 @@ export class HumanInterface {
 
   /**
    * Start receiving events
+   * @returns {Promise<void>}
    */
   async start() {
     this.isActive = true;
@@ -35,6 +37,7 @@ export class HumanInterface {
 
   /**
    * Stop receiving events
+   * @returns {Promise<void>}
    */
   async stop() {
     this.isActive = false;
@@ -43,7 +46,8 @@ export class HumanInterface {
   /**
    * Send a message to the user
    * @param {string} message - The message content
-   * @param {Object} options - Additional options (e.g., attachments, ephemeral)
+   * @param {Object} [options={}] - Additional options (e.g., attachments, ephemeral)
+   * @returns {Promise<any>} The result of sending the message
    */
   async sendMessage(message, options = {}) {
     throw new Error("Subclass must implement sendMessage()");
@@ -52,7 +56,8 @@ export class HumanInterface {
   /**
    * Handle a task received from the user
    * @param {string} task - The task description
-   * @param {Object} options - Task options (e.g., attachments)
+   * @param {Object} [options={}] - Task options (e.g., attachments)
+   * @returns {Promise<{handled: boolean, interface: string}>}
    */
   async handleTask(task, options = {}) {
     this.callbacks.onTaskReceived.forEach(cb => cb(task, options));
@@ -62,7 +67,8 @@ export class HumanInterface {
   /**
    * Handle feedback from the user
    * @param {string} feedback - The feedback content
-   * @param {Object} context - Context (e.g., original message ID)
+   * @param {Object} [context={}] - Context (e.g., original message ID)
+   * @returns {Promise<{handled: boolean, interface: string}>}
    */
   async handleFeedback(feedback, context = {}) {
     this.callbacks.onFeedbackReceived.forEach(cb => cb(feedback, context));
@@ -71,6 +77,8 @@ export class HumanInterface {
 
   /**
    * Register a callback for task received events
+   * @param {Function} callback
+   * @returns {HumanInterface}
    */
   onTaskReceived(callback) {
     this.callbacks.onTaskReceived.push(callback);
@@ -79,6 +87,8 @@ export class HumanInterface {
 
   /**
    * Register a callback for feedback events
+   * @param {Function} callback
+   * @returns {HumanInterface}
    */
   onFeedbackReceived(callback) {
     this.callbacks.onFeedbackReceived.push(callback);
@@ -87,6 +97,8 @@ export class HumanInterface {
 
   /**
    * Register a callback for status updates
+   * @param {Function} callback
+   * @returns {HumanInterface}
    */
   onStatusUpdate(callback) {
     this.callbacks.onStatusUpdate.push(callback);
@@ -95,6 +107,8 @@ export class HumanInterface {
 
   /**
    * Register a callback for session completion
+   * @param {Function} callback
+   * @returns {HumanInterface}
    */
   onSessionComplete(callback) {
     this.callbacks.onSessionComplete.push(callback);
@@ -103,6 +117,7 @@ export class HumanInterface {
 
   /**
    * Get active sessions
+   * @returns {Array<Object>}
    */
   getActiveSessions() {
     return [];
@@ -118,6 +133,7 @@ export class HumanInterface {
 
   /**
    * Get the last stored message ID
+   * @returns {string|null}
    */
   getLastMessageId() {
     return this.config.lastMessageId || null;
@@ -126,6 +142,7 @@ export class HumanInterface {
   /**
    * Query for the latest message from a session
    * @param {string} sessionId - The session ID
+   * @returns {Promise<any>}
    */
   async queryLatestMessage(sessionId) {
     throw new Error("Subclass must implement queryLatestMessage()");
@@ -133,6 +150,7 @@ export class HumanInterface {
 
   /**
    * Check for new user interactions (for polling-based interfaces)
+   * @returns {Promise<void>}
    */
   async poll() {
     // Override in subclass for polling-based interfaces
@@ -140,6 +158,7 @@ export class HumanInterface {
 
   /**
    * Start polling for interactions
+   * @param {number} intervalMs
    */
   startPolling(intervalMs) {
     if (this.pollingInterval) {
@@ -160,6 +179,7 @@ export class HumanInterface {
 
   /**
    * Get interface capability info
+   * @returns {Object}
    */
   getCapabilities() {
     return {
@@ -205,6 +225,7 @@ export class InterfaceManager {
   /**
    * Get an interface by name
    * @param {string} name - The interface name
+   * @returns {HumanInterface|undefined}
    */
   get(name) {
     return this.interfaces.get(name);
@@ -212,6 +233,7 @@ export class InterfaceManager {
 
   /**
    * Get all registered interfaces
+   * @returns {Array<HumanInterface>}
    */
   getAll() {
     return Array.from(this.interfaces.values());
@@ -219,6 +241,7 @@ export class InterfaceManager {
 
   /**
    * Start all interfaces
+   * @returns {Promise<void>}
    */
   async startAll() {
     for (const iface of this.interfaces.values()) {
@@ -233,6 +256,7 @@ export class InterfaceManager {
 
   /**
    * Stop all interfaces
+   * @returns {Promise<void>}
    */
   async stopAll() {
     for (const iface of this.interfaces.values()) {
@@ -248,7 +272,8 @@ export class InterfaceManager {
   /**
    * Handle a task from any interface
    * @param {string} task - The task description
-   * @param {Object} options - Task options with optional source interface
+   * @param {Object} [options={}] - Task options with optional source interface
+   * @returns {Promise<any|Array<any>>}
    */
   async handleTask(task, options = {}) {
     const { sourceInterface, ...rest } = options;
@@ -267,6 +292,9 @@ export class InterfaceManager {
 
   /**
    * Send a message to the user through a specific interface
+   * @param {string} message - The message content
+   * @param {Object} [options={}] - Options including destinationInterface
+   * @returns {Promise<any>}
    */
   async sendMessage(message, options = {}) {
     const { destinationInterface, ...rest } = options;
@@ -286,6 +314,7 @@ export class InterfaceManager {
 
   /**
    * Get all active sessions across interfaces
+   * @returns {Array<Object>}
    */
   getAllActiveSessions() {
     const sessions = [];
@@ -298,6 +327,9 @@ export class InterfaceManager {
 
   /**
    * Broadcast a message to all active interfaces
+   * @param {string} message - The message content
+   * @param {Object} [options={}] - Broadcast options
+   * @returns {Promise<Array<any>>}
    */
   async broadcast(message, options = {}) {
     const results = [];

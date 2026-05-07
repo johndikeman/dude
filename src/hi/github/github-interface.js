@@ -57,6 +57,7 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Initialize the interface
+   * @returns {Promise<void>}
    */
   async init() {
     if (!this.config.repo) {
@@ -80,6 +81,7 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Poll for new comments on linked PRs
+   * @returns {Promise<void>}
    */
   async poll() {
     if (!this.isActive) return;
@@ -128,6 +130,8 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Fetch comments from a PR
+   * @param {number|string} prNumber - The PR number
+   * @returns {Promise<Array<Object>>}
    */
   async fetchPRComments(prNumber) {
     try {
@@ -144,6 +148,10 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Link a PR to a session
+   * @param {string} sessionId - The session ID
+   * @param {number|string} prNumber - The PR number
+   * @param {string} [repo] - GitHub repository
+   * @returns {Promise<void>}
    */
   async linkPR(sessionId, prNumber, repo = this.config.repo) {
     this.sessionMapping.set(sessionId, {
@@ -156,6 +164,7 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Unlink a PR from a session
+   * @param {string} sessionId - The session ID
    */
   unlinkPR(sessionId) {
     this.sessionMapping.delete(sessionId);
@@ -164,6 +173,8 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Get session by PR number
+   * @param {number|string} prNumber - The PR number
+   * @returns {Object|null}
    */
   getSessionByPR(prNumber) {
     for (const [sessionId, info] of this.sessionMapping) {
@@ -176,6 +187,7 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Get all active sessions with PR info
+   * @returns {Array<Object>}
    */
   getActiveSessions() {
     return Array.from(this.sessionMapping.values());
@@ -183,6 +195,8 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Emit an event to registered handlers
+   * @param {string} event - Event name
+   * @param {any} data - Event data
    */
   emit(event, data) {
     const handlers = this.callbacks[`on${event.charAt(0).toUpperCase() + event.slice(1)}`];
@@ -193,6 +207,10 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Send a message to GitHub (as a PR comment)
+   * @param {number|string} prNumber - The PR number
+   * @param {string} message - The message content
+   * @param {string} [repo] - GitHub repository
+   * @returns {Promise<boolean>}
    */
   async sendComment(prNumber, message, repo = this.config.repo) {
     try {
@@ -211,6 +229,9 @@ export class GitHubInterface extends HumanInterface {
   /**
    * Intercept PR creation to associate with session
    * This should be used as a hook/tool wrapper
+   * @param {Object} result - Result of pr_create tool
+   * @param {string} sessionId - Current session ID
+   * @returns {Promise<Object>} The result
    */
   async interceptPRCreate(result, sessionId) {
     if (!result || !result.prNumber) return result;
@@ -224,6 +245,7 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Fetch open PRs for a session
+   * @returns {Promise<Array<Object>>}
    */
   async fetchOpenPRs() {
     try {
@@ -250,6 +272,7 @@ export class GitHubInterface extends HumanInterface {
 
   /**
    * Stop the interface
+   * @returns {Promise<void>}
    */
   async stop() {
     this.stopPolling();

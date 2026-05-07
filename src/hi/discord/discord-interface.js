@@ -52,6 +52,11 @@ export class DiscordInterface extends HumanInterface {
     };
   }
 
+  /**
+   * Register a callback for command events
+   * @param {Function} callback
+   * @returns {DiscordInterface}
+   */
   onCommand(callback) {
     this.callbacks.onCommand.push(callback);
     return this;
@@ -59,6 +64,7 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Initialize the Discord client and register commands
+   * @returns {Promise<void>}
    */
   async init() {
     if (!this.config.token) {
@@ -92,6 +98,7 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Register slash commands
+   * @returns {Promise<void>}
    */
   async registerCommands() {
     if (!this.client || this.commandsRegistered) return;
@@ -114,6 +121,7 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Get the slash command definitions
+   * @returns {Array<Object>}
    */
   getSlashCommands() {
     return [
@@ -161,6 +169,8 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Handle Discord interaction events
+   * @param {Object} interaction - The Discord interaction
+   * @returns {Promise<void>}
    */
   async handleInteraction(interaction) {
     if (!interaction.isChatInputCommand()) return;
@@ -200,6 +210,9 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Handle /task command
+   * @param {Object} interaction - The Discord interaction
+   * @param {Object} options - Command options
+   * @returns {Promise<void>}
    */
   async handleTaskCommand(interaction, options) {
     let task = options.getString("description");
@@ -220,6 +233,8 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Handle /start command
+   * @param {Object} interaction - The Discord interaction
+   * @returns {Promise<void>}
    */
   async handleStartCommand(interaction) {
     await interaction.reply({ content: "Starting task processing...", fetchReply: true });
@@ -228,6 +243,8 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Handle /tasks command
+   * @param {Object} interaction - The Discord interaction
+   * @returns {Promise<void>}
    */
   async handleTasksCommand(interaction) {
     // Delegate to main agent for task listing
@@ -242,6 +259,8 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Handle /status command
+   * @param {Object} interaction - The Discord interaction
+   * @returns {Promise<void>}
    */
   async handleStatusCommand(interaction) {
     const status = {
@@ -255,6 +274,8 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Handle /sessions command
+   * @param {Object} interaction - The Discord interaction
+   * @returns {Promise<void>}
    */
   async handleSessionsCommand(interaction) {
     const sessions = this.getActiveSessions();
@@ -273,6 +294,9 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Handle /resume command
+   * @param {Object} interaction - The Discord interaction
+   * @param {Object} options - Command options
+   * @returns {Promise<void>}
    */
   async handleResumeCommand(interaction, options) {
     const sessionId = options.getString("session-id");
@@ -288,6 +312,8 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Handle Discord message events
+   * @param {Object} message - The Discord message
+   * @returns {Promise<void>}
    */
   async handleMessage(message) {
     // Ignore bot messages
@@ -324,6 +350,9 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Send a message to the user
+   * @param {string} message - The message content
+   * @param {Object} [options={}] - Message options
+   * @returns {Promise<Object>} The sent message
    */
   async sendMessage(message, options = {}) {
     const { channelId, messageId, embeds } = options;
@@ -367,6 +396,9 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Send an editable status update
+   * @param {string} message - The message content
+   * @param {Object} [options={}] - Update options
+   * @returns {Promise<Object>} The updated message
    */
   async sendStatusUpdate(message, options = {}) {
     const { channelId, messageId } = options;
@@ -402,6 +434,8 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Store a session's current message ID for reply tracking
+   * @param {string} sessionId - The session ID
+   * @param {string} messageId - The message ID
    */
   storeSessionMessageId(sessionId, messageId) {
     if (!this.sessionMapping.has(sessionId)) {
@@ -417,6 +451,8 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Get session info by Discord message ID
+   * @param {string} messageId - The message ID
+   * @returns {Object|null}
    */
   getSessionByMessageId(messageId) {
     for (const [sessionId, info] of this.sessionMapping) {
@@ -429,6 +465,7 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Get active sessions
+   * @returns {Array<Object>}
    */
   getActiveSessions() {
     return Array.from(this.sessionMapping.values()).map((info) => ({
@@ -439,6 +476,8 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Query for latest message from a session
+   * @param {string} sessionId - The session ID
+   * @returns {Promise<Object|null>}
    */
   async queryLatestMessage(sessionId) {
     const sessionInfo = this.sessionMapping.get(sessionId);
@@ -458,6 +497,9 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Emit an event to registered handlers - legacy support
+   * @param {string} event - Event name
+   * @param {any} data - Event data
+   * @param {Object} [options={}] - Event options
    */
   emit(event, data, options = {}) {
     if (event === "task") {
@@ -474,6 +516,8 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Process an attachment and return its content
+   * @param {Object} attachment - The Discord attachment
+   * @returns {Promise<string>}
    */
   async processAttachment(attachment) {
     const isText =
@@ -497,6 +541,7 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Get pending tasks from tasks.md
+   * @returns {Array<string>}
    */
   getPendingTasks() {
     const { tasksFile } = getPaths();
@@ -527,6 +572,9 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Helper to truncate text
+   * @param {string} str - String to truncate
+   * @param {number} [limit=2000] - Character limit
+   * @returns {string}
    */
   truncate(str, limit = 2000) {
     if (!str) return "";
@@ -536,6 +584,7 @@ export class DiscordInterface extends HumanInterface {
 
   /**
    * Stop the interface
+   * @returns {Promise<void>}
    */
   async stop() {
     this.stopPolling();

@@ -6,6 +6,9 @@ export class DiscordExtensions {
   /**
    * Create a Discord message extension
    * Allows agents to send messages back to the user
+   * @param {string} sessionId - The session ID
+   * @param {Object} discordInterface - The Discord interface instance
+   * @returns {Object} Pi extension object
    */
   static createMessageExtension(sessionId, discordInterface) {
     return {

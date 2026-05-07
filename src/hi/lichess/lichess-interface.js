@@ -41,6 +41,7 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Initialize the interface
+   * @returns {Promise<void>}
    */
   async init() {
     if (!this.config.apiKey) {
@@ -54,6 +55,7 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Poll for new games that haven't been analyzed
+   * @returns {Promise<void>}
    */
   async poll() {
     if (!this.isActive) return;
@@ -75,6 +77,7 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Get unanalyzed games from Lichess
+   * @returns {Promise<Array<Object>>}
    */
   async getUnanalyzedGames() {
     if (!this.config.lastGamesCheck) {
@@ -111,6 +114,8 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Parse Lichess game export format
+   * @param {string} text - PGN text
+   * @returns {Array<Object>}
    */
   parseGamesExport(text) {
     const games = [];
@@ -143,6 +148,8 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Start an analysis session for a game
+   * @param {Object} game - Game metadata
+   * @returns {Promise<void>}
    */
   async startGameSession(game) {
     const sessionId = `lichess-${game.id}`;
@@ -173,6 +180,8 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Get session for a game
+   * @param {string} gameId - Lichess game ID
+   * @returns {Object|null}
    */
   getSessionByGame(gameId) {
     for (const [sessionId, info] of this.sessionMapping) {
@@ -185,6 +194,7 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Get all active game sessions
+   * @returns {Array<Object>}
    */
   getActiveSessions() {
     return Array.from(this.sessionMapping.values());
@@ -192,6 +202,7 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Mark a game as analyzed
+   * @param {string} gameId - Lichess game ID
    */
   markAnalyzed(gameId) {
     const session = this.getSessionByGame(gameId);
@@ -203,6 +214,8 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Fetch game PGN from Lichess
+   * @param {string} gameId - Lichess game ID
+   * @returns {Promise<string|null>}
    */
   async fetchGamePGN(gameId) {
     try {
@@ -227,6 +240,8 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Get game analysis from Lichess mast
+   * @param {string} gameId - Lichess game ID
+   * @returns {Promise<Object|null>}
    */
   async getGameAnalysis(gameId) {
     try {
@@ -251,6 +266,8 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Emit an event to registered handlers
+   * @param {string} event - Event name
+   * @param {any} data - Event data
    */
   emit(event, data) {
     const handlers = this.callbacks[`on${event.charAt(0).toUpperCase() + event.slice(1)}`];
@@ -261,6 +278,9 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Send a message (not typically needed for Lichess, but available)
+   * @param {string} message - The message content
+   * @param {Object} [options={}] - Message options
+   * @returns {Promise<Object>}
    */
   async sendMessage(message, options = {}) {
     // Lichess interface primarily receives, not sends messages
@@ -281,6 +301,7 @@ export class LichessInterface extends HumanInterface {
 
   /**
    * Stop the interface
+   * @returns {Promise<void>}
    */
   async stop() {
     this.stopPolling();
