@@ -50,6 +50,7 @@ export class DiscordInterface extends HumanInterface {
       ...this.callbacks,
       onCommand: [],
     };
+    this.sessionMapping = new Map();
   }
 
   /**
@@ -87,7 +88,9 @@ export class DiscordInterface extends HumanInterface {
     });
 
     // Handle interactions
-    this.client.on("interactionCreate", (interaction) => this.handleInteraction(interaction));
+    this.client.on("interactionCreate", (interaction) =>
+      this.handleInteraction(interaction),
+    );
 
     // Handle messages (for replies)
     this.client.on("messageCreate", (message) => this.handleMessage(message));
@@ -135,7 +138,10 @@ export class DiscordInterface extends HumanInterface {
             .setRequired(true),
         )
         .addAttachmentOption((option) =>
-          option.setName("file").setDescription("Optional text file attachment").setRequired(false),
+          option
+            .setName("file")
+            .setDescription("Optional text file attachment")
+            .setRequired(false),
         ),
       new SlashCommandBuilder()
         .setName("start")
@@ -164,7 +170,7 @@ export class DiscordInterface extends HumanInterface {
             .setDescription("Feedback for resumption")
             .setRequired(false),
         ),
-    ].map(cmd => cmd.toJSON());
+    ].map((cmd) => cmd.toJSON());
   }
 
   /**
@@ -186,7 +192,7 @@ export class DiscordInterface extends HumanInterface {
         for (const cb of this.callbacks.onCommand) {
           if (await cb(commandName, interaction, options)) return;
         }
-        
+
         // Fallback to internal handlers if not handled
         switch (commandName) {
           case "start":
@@ -228,7 +234,11 @@ export class DiscordInterface extends HumanInterface {
     });
 
     // Handle the task via the base class method
-    await this.handleTask(task, { attachment, sourceInterface: "discord", interaction });
+    await this.handleTask(task, {
+      attachment,
+      sourceInterface: "discord",
+      interaction,
+    });
   }
 
   /**
@@ -237,7 +247,10 @@ export class DiscordInterface extends HumanInterface {
    * @returns {Promise<void>}
    */
   async handleStartCommand(interaction) {
-    await interaction.reply({ content: "Starting task processing...", fetchReply: true });
+    await interaction.reply({
+      content: "Starting task processing...",
+      fetchReply: true,
+    });
     this.emit("start", interaction);
   }
 
@@ -252,7 +265,9 @@ export class DiscordInterface extends HumanInterface {
     if (tasks.length === 0) {
       await interaction.reply("No pending tasks.");
     } else {
-      const list = tasks.map((t, i) => `${i + 1}. ${this.truncate(t, 80)}`).join("\n");
+      const list = tasks
+        .map((t, i) => `${i + 1}. ${this.truncate(t, 80)}`)
+        .join("\n");
       await interaction.reply(`**Pending Tasks**:\n${list}`);
     }
   }
@@ -269,7 +284,9 @@ export class DiscordInterface extends HumanInterface {
       lastChannelId: this.lastChannelId,
       activeSessions: this.getActiveSessions(),
     };
-    await interaction.reply(`**Status**:\n\`\`\`${JSON.stringify(status, null, 2)}\`\`\``);
+    await interaction.reply(
+      `**Status**:\n\`\`\`${JSON.stringify(status, null, 2)}\`\`\``,
+    );
   }
 
   /**
@@ -307,7 +324,11 @@ export class DiscordInterface extends HumanInterface {
       ephemeral: true,
     });
 
-    await this.handleFeedback(feedback, { sessionId, sourceInterface: "discord", interaction });
+    await this.handleFeedback(feedback, {
+      sessionId,
+      sourceInterface: "discord",
+      interaction,
+    });
   }
 
   /**
@@ -332,7 +353,9 @@ export class DiscordInterface extends HumanInterface {
     // Check if this references a known session
     const sessionInfo = this.getSessionByMessageId(referencedMessage.id);
     if (sessionInfo) {
-      log(`Received feedback on session ${sessionInfo.sessionId}: ${message.content}`);
+      log(
+        `Received feedback on session ${sessionInfo.sessionId}: ${message.content}`,
+      );
 
       // Store the new message ID for this session
       this.storeMessageId(message.id);
@@ -375,7 +398,7 @@ export class DiscordInterface extends HumanInterface {
     }
 
     const fullMessage = `[Agent] ${message}`;
-    
+
     try {
       const sentMessage = await channel.send({
         content: fullMessage,
@@ -507,7 +530,8 @@ export class DiscordInterface extends HumanInterface {
     } else if (event === "feedback") {
       this.handleFeedback(data, options);
     } else {
-      const handlers = this.callbacks[`on${event.charAt(0).toUpperCase() + event.slice(1)}`];
+      const handlers =
+        this.callbacks[`on${event.charAt(0).toUpperCase() + event.slice(1)}`];
       if (handlers) {
         handlers.forEach((handler) => handler(data));
       }
@@ -522,15 +546,16 @@ export class DiscordInterface extends HumanInterface {
   async processAttachment(attachment) {
     const isText =
       attachment.contentType?.startsWith("text/") ||
-      [".txt", ".md", ".js", ".ts", ".py", ".json", ".c", ".cpp", ".h"].some((ext) =>
-        attachment.name.toLowerCase().endsWith(ext),
+      [".txt", ".md", ".js", ".ts", ".py", ".json", ".c", ".cpp", ".h"].some(
+        (ext) => attachment.name.toLowerCase().endsWith(ext),
       );
 
     if (!isText) return "";
 
     try {
       const response = await fetch(attachment.url);
-      if (!response.ok) throw new Error(`Download failed: ${response.statusText}`);
+      if (!response.ok)
+        throw new Error(`Download failed: ${response.statusText}`);
       const text = await response.text();
       return `\n\nFile content (${attachment.name}):\n${text}`;
     } catch (err) {
