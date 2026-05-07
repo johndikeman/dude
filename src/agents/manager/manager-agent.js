@@ -6,7 +6,9 @@
 import fs from "fs";
 import path from "path";
 import { AgentSessionWrapper, SubAgent } from "../session-wrapper.js";
-import { defineTool } from "@mariozechner/pi-coding-agent";
+import { WorkerAgent } from "../worker/worker-agent.js";
+import { GitHubExtensions } from "../../hi/github/github-interface.js";
+import { defineTool, createCodingTools } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 const getPaths = () => {
@@ -51,6 +53,8 @@ export class ManagerAgent extends AgentSessionWrapper {
     this.phase = "planning"; // planning, waiting_for_approval, executing, evaluating, complete
     this.lastStatus = "Starting...";
     this.sessionHistory = []; // Track subagent sessions
+    this.githubInterface = options.githubInterface;
+    this.sourceInterface = options.sourceInterface;
   }
 
   /**
@@ -103,6 +107,18 @@ export class ManagerAgent extends AgentSessionWrapper {
       },
     });
 
+    const messageUserTool = defineTool({
+      name: "message_user",
+      description: "Send a message to the user for feedback, clarification, or updates",
+      parameters: Type.Object({
+        message: Type.String({ description: "The message to send to the user" }),
+      }),
+      execute: async (args) => {
+        await this.notifyUser(args.message);
+        return { content: [{ type: "text", text: "Message sent to user." }] };
+      },
+    });
+
     const prompt = `You are a manager agent responsible for planning and coordinating the following task:
 
 ${this.task}
@@ -115,15 +131,19 @@ Your job is to:
 5. Once approved (you will receive a message), call start_worker to begin implementation.
 6. After the worker completes, evaluate their results.
 
+You can use message_user at any time to ask for clarification or provide updates.
+
 You have READ-ONLY access to the codebase for research.
 Use [STATUS] prefix to indicate your progress.
 `;
 
+    const readOnlyTools = createCodingTools(this.workspacePath).filter(tool => 
+      ["read", "bash", "ls", "grep", "find"].includes(tool.name)
+    );
+
     return await super.start(prompt, {
-      customTools: [planReadyTool, startWorkerTool, resumeWorkerTool],
-      // Manager should be read-only - we can enforce this by only giving it read tools
-      // but pi-coding-agent default tools include write/edit/bash.
-      // We'll override them to be read-only where possible.
+      tools: readOnlyTools,
+      customTools: [planReadyTool, startWorkerTool, resumeWorkerTool, messageUserTool],
     });
   }
 
@@ -231,27 +251,32 @@ Reply to this message to approve the plan and start implementation.`;
 
     this.setStatus("spawning worker agent for implementation");
 
-    const worker = new SubAgent(
-      workerSessionId,
-      workerSessionFile,
-      this,
-      {
-        role: "worker",
-        task: this.task,
-        acceptanceCriteria: this.acceptanceCriteria,
-        workDirectories: this.workDirectories,
-      },
-    );
+    const worker = new WorkerAgent({
+      sessionId: workerSessionId,
+      managerAgent: this,
+      task: this.task,
+      acceptanceCriteria: this.acceptanceCriteria,
+      workDirectories: this.workDirectories,
+      workspacePath: this.workspacePath,
+      onStatusUpdate: (status) => {
+        this.setStatus(`Worker: ${status}`);
+      }
+    });
 
     this.workerAgents.set(workerSessionId, worker);
     this.activeWorker = worker;
     this.sessionHistory.push(workerSessionId);
 
+    // Setup extensions
+    const extensions = [];
+    if (this.githubInterface) {
+      extensions.push(GitHubExtensions.createPRLinkExtension(workerSessionId, this.githubInterface));
+      extensions.push(GitHubExtensions.createPRCommentExtension(workerSessionId, this.githubInterface));
+    }
+
     // Start the worker
     try {
-      await worker.start(this.task, {
-        cwd: this.workspacePath,
-      });
+      await worker.run({ extensions });
       log(`Worker agent ${workerSessionId} started`);
       return { workerId: workerSessionId };
     } catch (err) {
@@ -408,6 +433,9 @@ If it needs revisions, call resume_worker with your feedback.
       workerAgents: Array.from(this.workerAgents.keys()),
       sessionHistory: this.sessionHistory,
       lastStatus: this.lastStatus,
+      sourceInterface: this.sourceInterface,
+      discordChannelId: this.discordChannelId,
+      discordMessageId: this.discordMessageId,
     };
   }
 }

@@ -46,7 +46,15 @@ export class DiscordInterface extends HumanInterface {
     this.client = null;
     this.commandsRegistered = false;
     this.lastChannelId = null;
-    this.sessionMapping = new Map(); // Maps session IDs to Discord message info
+    this.callbacks = {
+      ...this.callbacks,
+      onCommand: [],
+    };
+  }
+
+  onCommand(callback) {
+    this.callbacks.onCommand.push(callback);
+    return this;
   }
 
   /**
@@ -163,21 +171,30 @@ export class DiscordInterface extends HumanInterface {
       case "task":
         await this.handleTaskCommand(interaction, options);
         break;
-      case "start":
-        await this.handleStartCommand(interaction);
-        break;
-      case "tasks":
-        await this.handleTasksCommand(interaction);
-        break;
-      case "status":
-        await this.handleStatusCommand(interaction);
-        break;
-      case "sessions":
-        await this.handleSessionsCommand(interaction);
-        break;
-      case "resume":
-        await this.handleResumeCommand(interaction, options);
-        break;
+      default:
+        // Let registered handlers handle other commands
+        for (const cb of this.callbacks.onCommand) {
+          if (await cb(commandName, interaction, options)) return;
+        }
+        
+        // Fallback to internal handlers if not handled
+        switch (commandName) {
+          case "start":
+            await this.handleStartCommand(interaction);
+            break;
+          case "tasks":
+            await this.handleTasksCommand(interaction);
+            break;
+          case "status":
+            await this.handleStatusCommand(interaction);
+            break;
+          case "sessions":
+            await this.handleSessionsCommand(interaction);
+            break;
+          case "resume":
+            await this.handleResumeCommand(interaction, options);
+            break;
+        }
     }
   }
 

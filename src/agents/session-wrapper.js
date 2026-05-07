@@ -48,6 +48,8 @@ export class AgentSessionWrapper {
     this.error = "";
     this.events = [];
     this.statusLines = [];
+    this.onStatusUpdate = config.onStatusUpdate || (() => {});
+    this.onQuotaExhausted = config.onQuotaExhausted || (() => {});
   }
 
   /**
@@ -89,10 +91,10 @@ export class AgentSessionWrapper {
       });
       
       // Add inline extensions if any
-      if (options.extensionFactories) {
+      if (extensions && extensions.length > 0) {
         loader.options.extensionFactories = [
           ...(loader.options.extensionFactories || []),
-          ...options.extensionFactories
+          ...extensions.map(ext => () => ext)
         ];
       }
       
@@ -107,7 +109,7 @@ export class AgentSessionWrapper {
         settingsManager,
         sessionManager,
         resourceLoader: loader,
-        tools: createCodingTools(cwd),
+        tools: options.tools || createCodingTools(cwd),
         customTools: customTools,
       });
 
@@ -133,7 +135,9 @@ export class AgentSessionWrapper {
               for (const line of lines) {
                 const statusMatch = line.match(/\[STATUS\]\s*(.+)/i);
                 if (statusMatch) {
-                  this.statusLines.push(statusMatch[1].trim());
+                  const status = statusMatch[1].trim();
+                  this.statusLines.push(status);
+                  this.onStatusUpdate(status);
                 }
               }
             }
@@ -149,6 +153,11 @@ export class AgentSessionWrapper {
           this.error = event.error || "Unknown error";
           this.isRunning = false;
           log(`Session error: ${this.error}`);
+          
+          const quotaInfo = this.isQuotaExhausted();
+          if (quotaInfo) {
+            this.onQuotaExhausted(quotaInfo);
+          }
         }
       });
 
