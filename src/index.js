@@ -1,16 +1,9 @@
 #!/usr/bin/env node
 import "dotenv/config";
-import {
-  Client,
-  GatewayIntentBits,
-  Partials,
-  REST,
-  Routes,
-  SlashCommandBuilder,
-} from "discord.js";
+import { Client, GatewayIntentBits, Partials } from "discord.js";
 import fs from "fs";
 import path from "path";
-import { execSync, spawn } from "child_process";
+import { spawn } from "child_process";
 import stripAnsi from "strip-ansi";
 
 const client = new Client({
@@ -62,12 +55,6 @@ let config = {
   fallbackModelProvider: null,
   useFallbackOnQuotaError: false, // flag to enable fallback on quota errors
 };
-
-function truncate(str, limit = 2000) {
-  if (!str) return "";
-  if (str.length <= limit) return str;
-  return str.slice(0, limit - 3) + "...";
-}
 
 let isRunning = false;
 let currentRunningTask = null;
@@ -164,18 +151,6 @@ client.on("messageCreate", async (message) => {
     return;
 });
 
-async function getGeminiApiKey() {
-  if (process.env.GEMINI_JSON_TOKEN) {
-    try {
-      const auth = JSON.parse(process.env.GEMINI_JSON_TOKEN);
-      return JSON.stringify(auth);
-    } catch (e) {
-      log("GEMINI_JSON_TOKEN is not valid JSON, using as raw token");
-      return JSON.stringify({ token: process.env.GEMINI_JSON_TOKEN });
-    }
-  }
-}
-
 async function runCycle(interaction, initialStatusMessage = null) {
   if (isRunning) {
     if (interaction) interaction.followUp("A task is already being processed.");
@@ -218,31 +193,18 @@ async function runCycle(interaction, initialStatusMessage = null) {
     log(`Switched to fallback model: ${MODEL_CODE} (${MODEL_PROVIDER})`);
   }
 
-  const apiKey = await getGeminiApiKey();
-  if (!apiKey) {
-    const errorMsg = "Could not obtain API key for Gemini.";
-    if (interaction) interaction.followUp(errorMsg);
-    log(errorMsg);
-    isRunning = false;
-    currentRunningTask = null;
-    return;
-  }
-
-  const repoBrief = fs.existsSync(getPaths().repoBriefFile)
-    ? fs.readFileSync(getPaths().repoBriefFile, "utf8")
-    : "";
-
   const prompt = `You are a self-improving AI agent named "dude".
 Current date: ${new Date().toLocaleString("en-US")}
-Your goal is to implement tasks laid out for you in ${getPaths().tasksFile}. your workspace is in (${config.workDir}).
-you have access to the "gh" cli, an obsidian vault, and the vps you're running in.
+Your goal is to implement the tasks/goals laid out for you in ${getPaths().tasksFile}. 
+your workspace is in (${config.workDir}).
+you have access to the gh cli, an obsidian vault, and the vps you're running in.
 if the task is to improve yourself, this will be in the dude/ directory. if the directory does not exist, you can use the gh cli to clone johndikeman/dude.
 you can clone other repositories if needed.
 Create a feature branch to work on, REMEMBER TO ALWAYS FIRST pull in the most recent 'main' branch and use it as the base of your feature branch in case another user has made changes, to avoid a merge conflict.
 when appropriate, write testcases to test new code.
 Then, commit the code to the feature branch and open a PR using gh cli.
 When the task is complete, mark it as done in the task file (${getPaths().tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
-Please add output to the files referenced for each particular task.
+Please add output summarizing the work completed to the files referenced for each particular task.
 
 if needed, previous sessions can be found in ~/.pi/agent/sessions/
 use lowercase writing and a semi-informal tone.
@@ -263,109 +225,6 @@ Context:
   let pausedTaskId = null;
   let quotaErrorHandled = false;
 
-  // Check if this task has a previous session to resume
-  const sessionMapping = SCHEDULER.getSessionMapping(task);
-  let existingSessionId = null;
-  if (sessionMapping && sessionMapping.sessionId) {
-    existingSessionId = sessionMapping.sessionId;
-    log(`Resuming task from existing session: ${existingSessionId}`);
-    // Clear the session mapping since we're using it now
-    SCHEDULER.clearSessionMapping(task);
-  }
-
-  // Create a session for this task run
-  let previousSessionId = null;
-
-  try {
-    const sessionOptions = {
-      discordMessageId: statusMessage ? statusMessage.id : null,
-      discordChannelId: statusMessage ? statusMessage.channelId : null,
-      workspacePath: config.workDir,
-      prompt: prompt.substring(0, 2000), // Store prompt snippet
-    };
-
-    if (isFallbackRetry) {
-      // For fallback retry, find the most recent active session to continue from
-      const sessions = SESSIONS.loadSessions();
-      const activeSessions = sessions.active.sort(
-        (a, b) => b.createdAt - a.createdAt,
-      );
-
-      if (activeSessions.length > 0) {
-        const prevSession = activeSessions[0];
-        previousSessionId = prevSession.id;
-        log(`Continuing from previous session: ${previousSessionId}`);
-
-        // Build the prompt to resume with context from previous run
-        const continuePrompt = `RESUME MODE: This is a continuation of a previous session that was interrupted due to a quota error. 
-
-Previous error was: ${previousError}
-
-Continuing the task: ${task}
-
-${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
-        sessionOptions.prompt = continuePrompt.substring(0, 2000);
-
-        sessionOptions.lastModel = MODEL_CODE;
-        sessionOptions.lastModelError = previousError;
-        sessionOptions.fallbackRetryContext = {
-          originalTask,
-          previousModelError: previousError,
-          fallbackModelUsed: MODEL_CODE,
-        };
-
-        // Update the existing session
-        SESSIONS.updateSession(previousSessionId, {
-          lastModel: MODEL_CODE,
-          originalFailureReason: previousError,
-          lastRetryAt: Date.now(),
-        });
-      } else {
-        // No previous session found, create new session but track that we should have continued
-        sessionOptions.fallbackRetryContext = {
-          originalTask,
-          previousModelError: previousError,
-          fallbackModelUsed: MODEL_CODE,
-          noPreviousSession: true,
-        };
-      }
-    }
-
-    // existingSessionId will be here if we already had a session for this prompt in the sessions file
-    if (existingSessionId) {
-      // Update existing session with new info for this run
-      SESSIONS.updateSession(existingSessionId, {
-        discordMessageId: statusMessage ? statusMessage.id : null,
-        discordChannelId: statusMessage ? statusMessage.channelId : null,
-        workspacePath: config.workDir,
-      });
-      currentSessionId = existingSessionId;
-      log(`Resumed session ${currentSessionId} for task: ${task}`);
-    } else if (isFallbackRetry && previousSessionId) {
-      currentSessionId = previousSessionId;
-      log(`Continuing session ${currentSessionId} for fallback retry: ${task}`);
-    } else {
-      // Create a new session
-      const session = SESSIONS.createSession(task, sessionOptions);
-      currentSessionId = session.id;
-      log(
-        `Created session ${currentSessionId} for task: ${task}${isFallbackRetry ? " (fallback retry, no previous session)" : ""}`,
-      );
-    }
-  } catch (e) {
-    log(`Failed to manage session: ${e.message}`);
-  }
-
-  const sessionFilePath = path.join(
-    getPaths().configDir,
-    "sessions",
-    `${currentSessionId || Date.now()}.jsonl`,
-  );
-
-  if (!fs.existsSync(path.dirname(sessionFilePath))) {
-    fs.mkdirSync(path.dirname(sessionFilePath), { recursive: true });
-  }
-
   const piArgs = [
     "--provider",
     MODEL_PROVIDER,
@@ -373,8 +232,6 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
     MODEL_CODE,
     "--mode",
     "json",
-    "--session",
-    sessionFilePath,
     prompt,
   ];
 
@@ -389,28 +246,7 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
     cwd: config.workDir,
   });
 
-  // Periodically run the status summarizer
-  let statusUpdateInterval = null;
-  if (config.statusUpdateInterval > 0) {
-    statusUpdateInterval = setInterval(async () => {
-      if (!isRunning || !currentSessionId) return;
-      try {
-        await runStatusSummarizer(
-          sessionFilePath,
-          (newStatus) => {
-            currentStatus = newStatus;
-            updateDiscordStatus(true);
-          },
-          task,
-        );
-      } catch (e) {
-        log(`Error running status summarizer: ${e.message}`);
-      }
-    }, config.statusUpdateInterval);
-  }
-
   piProcess.on("error", async (err) => {
-    if (statusUpdateInterval) clearInterval(statusUpdateInterval);
     isRunning = false;
     currentRunningTask = null;
     pausedTaskInfo = null;
@@ -461,31 +297,11 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
   };
 
   piProcess.on("close", async (code) => {
-    if (statusUpdateInterval) clearInterval(statusUpdateInterval);
     isRunning = false;
     currentRunningTask = null;
     // Check if this was a quota pause
-    const schedule = SCHEDULER.loadSchedule();
-    const isQuotaPause =
-      schedule.scheduled.some(
-        (t) => t.task === task && t.reason === "quota_resume",
-      ) || quotaErrorHandled;
-
-    if (code === 0 && !isQuotaPause) {
+    if (code === 0) {
       log("pi finished successfully.");
-      currentStatus = "Completed successfully.";
-      pausedTaskInfo = null; // Clear paused task info for successful completion
-      await updateDiscordStatus(true);
-
-      // Complete the session
-      try {
-        if (currentSessionId) {
-          SESSIONS.completeSession(currentSessionId);
-          SESSIONS.archiveCompletedSessions();
-        }
-      } catch (e) {
-        log(`Failed to complete session: ${e.message}`);
-      }
 
       if (interaction) {
         const finalResponse = lastAssistantMessage || piOutput;
@@ -508,89 +324,7 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
           truncatedOutput || "Task completed successfully (no output).",
         );
       }
-
-      // If autoNext is enabled, start the next task
-      if (config.autoNext) {
-        log("autoNext is enabled, starting next task...");
-        // Use a short delay to allow file system to settle (especially for tasks.md)
-        setTimeout(() => {
-          runCycle();
-        }, 5000);
-      }
-    } else if (isQuotaPause) {
-      // Task was paused due to quota, already scheduled for resume
-      // Keep pausedTaskInfo for status display
-      log(`Task ${task} was paused due to quota, scheduled for resume.`);
-      const resumeTime =
-        schedule.scheduled.find(
-          (t) => t.task === task && t.reason === "quota_resume",
-        )?.runAt - Date.now() || 0;
-      currentStatus = `Paused (quota). Resumes in ${formatDuration(resumeTime)}.`;
-      await updateDiscordStatus(true);
-      if (interaction) {
-        const cleanedOutput = stripAnsi(piOutput.trim());
-        const truncatedOutput =
-          cleanedOutput.length > 1000
-            ? "..." + cleanedOutput.slice(-1000)
-            : cleanedOutput;
-
-        let response = `Task ${task} was paused due to Google API quota exhaustion. Will resume automatically when quota resets.`;
-
-        // Include the actual error message that was detected
-        const pausedTask = pausedTaskId
-          ? schedule.paused.find((t) => t.id === pausedTaskId)
-          : null;
-        if (pausedTask?.errorInfo?.errorMessage) {
-          const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 300);
-          response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 300 ? "..." : ""}\n\`\`\``;
-        }
-
-        if (truncatedOutput) {
-          response += `\n\n**Output so far:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
-        }
-
-        if (response.length > 2000) {
-          response = response.slice(0, 1997) + "...";
-        }
-        interaction.followUp(response);
-      } else if (statusMessage) {
-        const cleanedOutput = stripAnsi(piOutput.trim());
-        const truncatedOutput =
-          cleanedOutput.length > 1000
-            ? "..." + cleanedOutput.slice(-1000)
-            : cleanedOutput;
-
-        let response = `Task ${task} was paused due to Google API quota exhaustion. Will resume automatically when quota resets.`;
-
-        // Include the actual error message that was detected
-        const pausedTask = pausedTaskId
-          ? schedule.paused.find((t) => t.id === pausedTaskId)
-          : null;
-        if (pausedTask?.errorInfo?.errorMessage) {
-          const errorPreview = pausedTask.errorInfo.errorMessage.slice(0, 300);
-          response += `\n\n**Original Error:**\n\`\`\`\n${errorPreview}${errorPreview.length >= 300 ? "..." : ""}\n\`\`\``;
-        }
-
-        if (truncatedOutput) {
-          response += `\n\n**Output so far:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
-        }
-
-        if (response.length > 2000) {
-          response = response.slice(0, 1997) + "...";
-        }
-        statusMessage.reply(response);
-      }
-
-      // If autoNext is enabled, start the next task (quota-paused task was already removed from pending)
-      if (config.autoNext) {
-        log("autoNext is enabled, starting next task after quota pause...");
-        // When the next task starts, it will set currentRunningTask and clear pausedTaskInfo
-        setTimeout(() => {
-          runCycle();
-        }, 5000);
-      }
     } else {
-      pausedTaskInfo = null; // Clear paused task info for failures
       let errorMsg = `**pi failed with code ${code}**\n\n`;
 
       const cleanError = stripAnsi(piError.trim());
@@ -633,120 +367,4 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
   });
 }
 
-function getPendingTasks() {
-  const { tasksFile } = getPaths();
-  if (!fs.existsSync(tasksFile)) return [];
-  const content = fs.readFileSync(tasksFile, "utf8");
-
-  const tasks = [];
-  const lines = content.split(/\r?\n/);
-  let currentTask = null;
-
-  for (const line of lines) {
-    if (line.startsWith("- [ ] ")) {
-      if (currentTask !== null) {
-        tasks.push(currentTask.trim());
-      }
-      currentTask = line.slice(6);
-    } else if (line.startsWith("- [x] ") || line.startsWith("#")) {
-      if (currentTask !== null) {
-        tasks.push(currentTask.trim());
-        currentTask = null;
-      }
-    } else if (currentTask !== null) {
-      // If it's an indented line or even if it's not, as long as we're in a task
-      // and haven't hit another task marker or header, it's part of the task.
-      // We un-indent it if it was indented by two spaces.
-      currentTask += "\n" + line.replace(/^  /, "");
-    }
-  }
-  if (currentTask !== null) {
-    tasks.push(currentTask.trim());
-  }
-
-  return [...new Set(tasks)];
-}
-
 client.login(process.env.DISCORD_TOKEN);
-
-async function runStatusSummarizer(sessionFilePath, updateStatus, task) {
-  log(`Running status summarizer for session: ${sessionFilePath}`);
-
-  const summarizerPrompt = `Summarize the latest progress of the AI agent working on the following task:
-Task: ${task}
-
-Based on the session history, provide a concise one-sentence status update of what the agent is currently doing or has just completed. 
-The summary should be suitable for a status display (e.g., "[STATUS] Implementing feature X"). 
-Only output the status line starting with [STATUS]. Use lowercase writing and a semi-informal tone.`;
-
-  const piArgs = [
-    "--model",
-    config.statusUpdateModel || "gemini-2.0-flash",
-    "--session",
-    sessionFilePath,
-    "--print",
-    summarizerPrompt,
-  ];
-
-  const summarizerProcess = spawn("pi", piArgs, {
-    stdio: ["inherit", "pipe", "pipe"],
-  });
-
-  let output = "";
-  let error = "";
-  summarizerProcess.stdout.on("data", (data) => {
-    output += data.toString();
-  });
-
-  summarizerProcess.stderr.on("data", (data) => {
-    error += data.toString();
-  });
-
-  summarizerProcess.on("close", (code) => {
-    if (code === 0) {
-      const lines = output.split("\n");
-      for (const line of lines) {
-        if (line.trim().includes("[STATUS]")) {
-          const status = line.trim().split("[STATUS]")[1].trim();
-          // Validate status: should be lowercase and not instructional text
-          if (isValidStatus(status)) {
-            updateStatus(status);
-            break;
-          }
-        }
-      }
-    } else {
-      log(`Status summarizer failed with code ${code}`);
-      if (error) {
-        log(`Error output: ${error.trim()}`);
-      }
-    }
-  });
-}
-
-// Helper function to validate status messages
-// Returns true if the status looks like a legitimate progress update
-// (starts with lowercase, not instructional text from prompt)
-function isValidStatus(status) {
-  if (!status || status.length < 3) return false;
-
-  // Status should start with a letter
-  if (!/^[a-zA-Z]/.test(status)) return false;
-
-  // Avoid instructional text from the prompt
-  const instructionalPatterns = [
-    /^report your status/i,
-    /^printing a line/i,
-    /^starting with/i,
-    /^use lowercase/i,
-    /^the summary should/i,
-    /^only output/i,
-    /^provide a concise/i,
-  ];
-
-  for (const pattern of instructionalPatterns) {
-    if (pattern.test(status)) return false;
-  }
-
-  return true;
-}
