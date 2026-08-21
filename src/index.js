@@ -12,9 +12,6 @@ import fs from "fs";
 import path from "path";
 import { execSync, spawn } from "child_process";
 import stripAnsi from "strip-ansi";
-import * as SCHEDULER from "./scheduler.js";
-import * as SESSIONS from "./sessions.js";
-import * as AUDIT from "./audit.js";
 
 const client = new Client({
   intents: [
@@ -27,9 +24,10 @@ const client = new Client({
 
 const getPaths = () => {
   const configDir = process.env.DUDE_CONFIG_DIR || process.cwd();
+  const obsidianDir = process.env.OBSIDIAN_DIR || process.cwd();
   return {
     configDir,
-    tasksFile: path.join(configDir, "tasks.md"),
+    tasksFile: path.join(obsidianDir, "ai-tasks.md"),
     configFile: path.join(configDir, "config.json"),
     logFile: path.join(configDir, "agent.log"),
     repoBriefFile: path.join(process.cwd(), "REPO_BRIEF.md"),
@@ -234,20 +232,17 @@ async function runCycle(interaction, initialStatusMessage = null) {
     ? fs.readFileSync(getPaths().repoBriefFile, "utf8")
     : "";
 
-  const prompt = `You are a self-improving AI agent. 
-
-${repoBrief ? `### Repository Brief:\n${repoBrief}\n` : ""}
-
-Current Task: ${task}
+  const prompt = `You are a self-improving AI agent named "dude".
 Current date: ${new Date().toLocaleString("en-US")}
-Your goal is to implement this task. your workspace is in (${config.workDir}).
+Your goal is to implement tasks laid out for you in ${getPaths().tasksFile}. your workspace is in (${config.workDir}).
+you have access to the "gh" cli, an obsidian vault, and the vps you're running in.
 if the task is to improve yourself, this will be in the dude/ directory. if the directory does not exist, you can use the gh cli to clone johndikeman/dude.
 you can clone other repositories if needed.
 Create a feature branch to work on, REMEMBER TO ALWAYS FIRST pull in the most recent 'main' branch and use it as the base of your feature branch in case another user has made changes, to avoid a merge conflict.
 when appropriate, write testcases to test new code.
 Then, commit the code to the feature branch and open a PR using gh cli.
 When the task is complete, mark it as done in the task file (${getPaths().tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
-make sure your final message is a summary of the work that was done, or an explanation of the failure.
+Please add output to the files referenced for each particular task.
 
 if needed, previous sessions can be found in ~/.pi/agent/sessions/
 use lowercase writing and a semi-informal tone.
@@ -464,314 +459,6 @@ ${prompt.substring(prompt.indexOf("You are a self-improving agent"))}`;
       }
     }
   };
-
-  let stdoutBuffer = "";
-  let stderrBuffer = "";
-
-  piProcess.stdout.on("data", (data) => {
-    const s = data.toString();
-    piOutput += s;
-    process.stdout.write(s);
-
-    stdoutBuffer += s;
-    const lines = stdoutBuffer.split("\n");
-    stdoutBuffer = lines.pop(); // Keep the partial line for next chunk
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      // Try to parse as JSON event (for --mode json)
-      try {
-        const event = JSON.parse(trimmed);
-
-        // Handle message events (start, update, end)
-        if (event.message && event.message.content) {
-          // Keep track of the last model message text for the final follow-up
-          if (event.message.role === "assistant") {
-            let messageText = "";
-            for (const content of event.message.content) {
-              if (content.type === "text" && content.text) {
-                messageText += content.text;
-              }
-            }
-            if (messageText) {
-              lastAssistantMessage = messageText;
-            }
-          }
-
-          for (const content of event.message.content) {
-            let text = "";
-            if (content.type === "text") text = content.text;
-            else if (content.type === "thinking") text = content.thinking;
-
-            if (text) {
-              const lines = text.split("\n");
-              for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (trimmedLine.includes("[STATUS]")) {
-                  const status = trimmedLine.split("[STATUS]")[1].trim();
-                  if (isValidStatus(status)) {
-                    currentStatus = status;
-                    updateDiscordStatus();
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // Handle tool execution events
-        const toolContent =
-          (event.type === "tool_execution_update" &&
-            event.partialResult &&
-            event.partialResult.content) ||
-          (event.type === "tool_execution_end" &&
-            event.result &&
-            event.result.content);
-
-        if (toolContent) {
-          for (const content of toolContent) {
-            if (content.type === "text" && content.text) {
-              const lines = content.text.split("\n");
-              for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (trimmedLine.includes("[STATUS]")) {
-                  const status = trimmedLine.split("[STATUS]")[1].trim();
-                  if (isValidStatus(status)) {
-                    currentStatus = status;
-                    updateDiscordStatus();
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // Check for quota errors in JSON events
-        let quotaErrorInfo = null;
-        const errorCandidates = [event.errorMessage, event.error].filter(
-          (m) => typeof m === "string",
-        );
-        for (const candidate of errorCandidates) {
-          if (SCHEDULER.isQuotaError(candidate)) {
-            quotaErrorInfo = SCHEDULER.parseQuotaError(candidate);
-            if (quotaErrorInfo) break;
-          }
-        }
-
-        if (quotaErrorInfo && !quotaErrorHandled) {
-          quotaErrorHandled = true;
-          log(`Quota error detected in JSON: ${quotaErrorInfo.errorMessage}`);
-
-          if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
-            // Use fallback model - restart the session with new model
-            log(`Switching to fallback model: ${FALLBACK_MODEL_CODE}`);
-            currentStatus = `Quota exhausted. Switching to fallback model ${FALLBACK_MODEL_CODE} to continue...`;
-            updateDiscordStatus(true);
-
-            // Kill current pi process
-            piProcess.kill("SIGINT");
-
-            // Update the session to use the fallback model (stored in session file)
-            // The session file will persist the model info for continuation
-            try {
-              SESSIONS.updateSession(currentSessionId, {
-                lastModel: MODEL_CODE,
-                fallbackModelUsed: FALLBACK_MODEL_CODE,
-                lastModelError: quotaErrorInfo.errorMessage,
-              });
-              log(
-                `Session updated with fallback info for resume: ${currentSessionId}`,
-              );
-            } catch (e) {
-              log(`Failed to update session with fallback info: ${e.message}`);
-            }
-
-            // Stop current cycle and re-queue the task for retry with fallback model
-            if (statusUpdateInterval) clearInterval(statusUpdateInterval);
-            isRunning = false;
-            currentRunningTask = null;
-            pausedTaskInfo = null;
-
-            // Add the task back to the queue (will pick up with fallback model on retry)
-            addTask(
-              `[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${quotaErrorInfo.errorMessage}`,
-            );
-
-            // Clear the current model tracking for this cycle
-            quotaErrorHandled = true;
-            updateDiscordStatus(true);
-            return; // exit this handler
-          } else {
-            // Original behavior - pause the task
-            const hasTime =
-              quotaErrorInfo.resetAfterMs && quotaErrorInfo.resetAfterMs > 0;
-            const waitInfo = hasTime
-              ? `until ${formatDuration(quotaErrorInfo.resetAfterMs)}`
-              : "until quota resets (estimated 1 hour)";
-            currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
-
-            // Pause the task
-            const paused = SCHEDULER.pauseTask(task, quotaErrorInfo);
-            pausedTaskId = paused.id;
-            pausedTaskInfo = {
-              task,
-              resumeAt: paused.resumeAt,
-              errorInfo: quotaErrorInfo,
-            };
-
-            // Remove the task from pending tasks in tasks.md to prevent retry
-            removeTaskFromPending(task);
-
-            // Schedule task as a scheduled task for after quota reset
-            SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
-            updateDiscordStatus(true);
-          }
-        }
-      } catch (e) {
-        // Not valid JSON, treat as plain text
-        // Look for [STATUS] in plain text lines
-        if (trimmed.includes("[STATUS]")) {
-          const status = trimmed.split("[STATUS]")[1].trim();
-          if (isValidStatus(status)) {
-            currentStatus = status;
-            updateDiscordStatus();
-          }
-        }
-
-        // Check for quota errors in plain text
-        if (SCHEDULER.isQuotaError(trimmed) && !quotaErrorHandled) {
-          quotaErrorHandled = true;
-          const errorInfo = SCHEDULER.parseQuotaError(trimmed);
-          if (errorInfo) {
-            log(`Quota error detected in text: ${errorInfo.errorMessage}`);
-
-            if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
-              // Use fallback model - restart the session with new model
-              log(`Switching to fallback model: ${FALLBACK_MODEL_CODE}`);
-              currentStatus = `Quota exhausted. Switching to fallback model ${FALLBACK_MODEL_CODE} to continue...`;
-              updateDiscordStatus(true);
-
-              // Stop this cycle and re-queue the task for retry
-              if (statusUpdateInterval) clearInterval(statusUpdateInterval);
-              isRunning = false;
-              currentRunningTask = null;
-              pausedTaskInfo = null;
-
-              // Add the task back to the queue (will pick up with fallback model on retry)
-              addTask(
-                `[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${errorInfo.errorMessage}`,
-              );
-
-              // Clear the handler
-              quotaErrorHandled = true;
-              updateDiscordStatus(true);
-            } else {
-              // Original behavior - pause the task
-              currentStatus = `Quota exhausted. Pausing task until ${formatDuration(
-                errorInfo.resetAfterMs,
-              )}.`;
-              updateDiscordStatus(true);
-
-              // Pause the task
-              const paused = SCHEDULER.pauseTask(task, errorInfo, {
-                sessionId: currentSessionId,
-                sessionFile: sessionFilePath,
-              });
-              pausedTaskId = paused.id;
-              pausedTaskInfo = {
-                task,
-                resumeAt: paused.resumeAt,
-                errorInfo,
-                sessionId: currentSessionId,
-              };
-
-              // Remove the task from pending tasks in tasks.md to prevent retry
-              removeTaskFromPending(task);
-
-              // Schedule task as a scheduled task for after quota reset
-              SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
-            }
-          }
-        }
-      }
-    }
-  });
-
-  piProcess.stderr.on("data", (data) => {
-    const s = data.toString();
-    piError += s;
-    process.stderr.write(s);
-
-    stderrBuffer += s;
-    const lines = stderrBuffer.split("\n");
-    stderrBuffer = lines.pop(); // Keep the partial line for next chunk
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      // Also check stderr for quota errors
-      if (SCHEDULER.isQuotaError(trimmed) && !quotaErrorHandled) {
-        quotaErrorHandled = true;
-        const errorInfo = SCHEDULER.parseQuotaError(trimmed);
-        if (errorInfo) {
-          log(`Quota error detected in stderr: ${errorInfo.errorMessage}`);
-
-          if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
-            // Use fallback model - restart the session with new model
-            log(`Switching to fallback model: ${FALLBACK_MODEL_CODE}`);
-            currentStatus = `Quota exhausted. Switching to fallback model ${FALLBACK_MODEL_CODE} to continue...`;
-            updateDiscordStatus(true);
-
-            // Stop this cycle and re-queue the task for retry
-            if (statusUpdateInterval) clearInterval(statusUpdateInterval);
-            isRunning = false;
-            currentRunningTask = null;
-            pausedTaskInfo = null;
-
-            // Add the task back to the queue (will pick up with fallback model on retry)
-            addTask(
-              `[FALLBACK_RETRY] Original: ${task}\nPrevious error: ${errorInfo.errorMessage}`,
-            );
-
-            // Clear the handler
-            quotaErrorHandled = true;
-            updateDiscordStatus(true);
-          } else {
-            // Original behavior - pause the task
-            const hasTime =
-              errorInfo.resetAfterMs && errorInfo.resetAfterMs > 0;
-            const waitInfo = hasTime
-              ? `until ${formatDuration(errorInfo.resetAfterMs)}`
-              : "until quota resets (estimated 1 hour)";
-            currentStatus = `Quota exhausted. Pausing task ${waitInfo}.`;
-            updateDiscordStatus(true);
-
-            // Pause the task
-            const paused = SCHEDULER.pauseTask(task, errorInfo, {
-              sessionId: currentSessionId,
-              sessionFile: sessionFilePath,
-            });
-            pausedTaskId = paused.id;
-            pausedTaskInfo = {
-              task,
-              resumeAt: paused.resumeAt,
-              errorInfo,
-              sessionId: currentSessionId,
-            };
-
-            // Remove the task from pending tasks in tasks.md to prevent retry
-            removeTaskFromPending(task);
-
-            // Schedule task as a scheduled task for after quota reset
-            SCHEDULER.scheduleTask(task, paused.resumeAt, "quota_resume");
-          }
-        }
-      }
-    }
-  });
 
   piProcess.on("close", async (code) => {
     if (statusUpdateInterval) clearInterval(statusUpdateInterval);
