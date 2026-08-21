@@ -24,10 +24,11 @@
     "./scheduler": "./src/scheduler.js"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.66.1",
+    "@earendil-works/pi-coding-agent": "^0.84.2",
     "chalk": "^5.6.2",
     "discord.js": "^14.26.2",
     "dotenv": "^17.4.1",
+    "obsidian-headless": "^0.0.14",
     "strip-ansi": "^7.2.0",
     "undici": "^8.0.2"
   }
