@@ -34,6 +34,7 @@ let FALLBACK_MODEL_CODE = null;
 let FALLBACK_MODEL_PROVIDER = null;
 let USE_FALLBACK_ON_QUOTA_ERROR = false;
 
+/** @param {string} msg - the message to log */
 function log(msg) {
   const { logFile } = getPaths();
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -139,9 +140,7 @@ client.on("messageCreate", async (message) => {
     : null;
 
   // or if user directly tagged the bot
-  const taggedBotDirectly = message.mentions.members
-    .keys()
-    .includes(client.user.id);
+  const taggedBotDirectly = message.mentions.members.has(client.user.id);
 
   if (
     !referencedMessage ||
@@ -149,56 +148,21 @@ client.on("messageCreate", async (message) => {
     !taggedBotDirectly
   )
     return;
+  runCycle(message);
 });
 
-async function runCycle(interaction, initialStatusMessage = null) {
-  if (isRunning) {
-    if (interaction) interaction.followUp("A task is already being processed.");
-    return;
-  }
-
-  const tasks = getPendingTasks();
-  if (tasks.length === 0) {
-    if (interaction) interaction.followUp("No pending tasks.");
-    return;
-  }
-
+/** this triggers a one-off run of the agent, separate from the periodic cron job
+ * @import {OmitPartialGroupDMChannel, Message} from 'discord.js'
+ @param {OmitPartialGroupDMChannel<Message<boolean>>} message - the discord message that triggered the agent run */
+async function runCycle(message) {
   isRunning = true;
-  let task = tasks[0];
-  currentRunningTask = task;
-  log(`Working on task: ${task}`);
 
-  // Check if this is a fallback retry task
-  let isFallbackRetry = false;
-  let originalTask = task;
-  let previousError = "";
-  if (task.startsWith("[FALLBACK_RETRY]")) {
-    isFallbackRetry = true;
-    // Extract original task and error
-    const match = task.match(
-      /\[FALLBACK_RETRY\]\s*Original:\s*(.+?)\s*Previous error:\s*(.+)/s,
-    );
-    if (match) {
-      originalTask = match[1].trim();
-      previousError = match[2].trim();
-      task = originalTask;
-    }
-    log(`Fallback retry enabled. Using fallback model: ${FALLBACK_MODEL_CODE}`);
-  }
-
-  // Switch to fallback model if this is a retry task
-  if (isFallbackRetry && USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
-    MODEL_CODE = FALLBACK_MODEL_CODE;
-    MODEL_PROVIDER = FALLBACK_MODEL_PROVIDER || "google-gemini-cli";
-    log(`Switched to fallback model: ${MODEL_CODE} (${MODEL_PROVIDER})`);
-  }
-
-  const prompt = `You are a self-improving AI agent named "dude".
+  const prompt = `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
 Current date: ${new Date().toLocaleString("en-US")}
 Your goal is to implement the tasks/goals laid out for you in ${getPaths().tasksFile}. 
 your workspace is in (${config.workDir}).
-you have access to the gh cli, an obsidian vault, and the vps you're running in.
-if the task is to improve yourself, this will be in the dude/ directory. if the directory does not exist, you can use the gh cli to clone johndikeman/dude.
+you have access to the gh cli, an obsidian vault, a onepassword service account for credentials, and the vps you're running in.
+the vps is an ubuntu server which uses nix + home-manager to manage itself. the repo johndikeman/dotfiles and branch vps_nix has the config. there's an automatic redeploy action so when you push to this branch, the config will be deployed to the machine.
 you can clone other repositories if needed.
 Create a feature branch to work on, REMEMBER TO ALWAYS FIRST pull in the most recent 'main' branch and use it as the base of your feature branch in case another user has made changes, to avoid a merge conflict.
 when appropriate, write testcases to test new code.
@@ -206,7 +170,7 @@ Then, commit the code to the feature branch and open a PR using gh cli.
 When the task is complete, mark it as done in the task file (${getPaths().tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
 Please add output summarizing the work completed to the files referenced for each particular task.
 
-if needed, previous sessions can be found in ~/.pi/agent/sessions/
+previous session logs can be found in ~/.pi/agent/sessions/
 use lowercase writing and a semi-informal tone.
 
 Context:
@@ -217,13 +181,7 @@ Context:
   let piOutput = "";
   let piError = "";
   let lastAssistantMessage = "";
-  let statusMessage = initialStatusMessage;
-  let currentSessionId = null;
-  let lastStatusUpdate = 0;
-  const UPDATE_INTERVAL = 5000;
   let currentStatus = "Starting...";
-  let pausedTaskId = null;
-  let quotaErrorHandled = false;
 
   const piArgs = [
     "--provider",
@@ -252,49 +210,8 @@ Context:
     pausedTaskInfo = null;
     log(`Failed to start pi process: ${err.message}`);
     currentStatus = `Failed to start.`;
-    await updateDiscordStatus(true);
-    if (interaction)
-      interaction.followUp(`Failed to start pi process: ${err.message}`);
+    if (message) message.reply(`Failed to start pi process: ${err.message}`);
   });
-
-  if (!statusMessage) {
-    let statusContent = `**Current Task:** ${task}\n**Status:** ${currentStatus}`;
-    if (statusContent.length > 2000) {
-      statusContent = statusContent.slice(0, 1990) + "... (truncated)";
-    }
-    if (interaction) {
-      statusMessage = await interaction.followUp({
-        content: statusContent,
-        fetchReply: true,
-      });
-    } else if (config.lastChannelId) {
-      try {
-        const channel = await client.channels.fetch(config.lastChannelId);
-        if (channel && channel.isTextBased()) {
-          statusMessage = await channel.send(statusContent);
-        }
-      } catch (e) {
-        log(`Failed to send auto-next status message: ${e.message}`);
-      }
-    }
-  }
-
-  const updateDiscordStatus = async (force = false) => {
-    if (!statusMessage) return;
-    const now = Date.now();
-    if (force || now - lastStatusUpdate > UPDATE_INTERVAL) {
-      lastStatusUpdate = now;
-      try {
-        let statusContent = `**Current Task:** ${task}\n**Status:** ${currentStatus}`;
-        if (statusContent.length > 2000) {
-          statusContent = statusContent.slice(0, 1990) + "... (truncated)";
-        }
-        await statusMessage.edit(statusContent);
-      } catch (e) {
-        log(`Failed to update Discord status: ${e.message}`);
-      }
-    }
-  };
 
   piProcess.on("close", async (code) => {
     isRunning = false;
@@ -303,24 +220,14 @@ Context:
     if (code === 0) {
       log("pi finished successfully.");
 
-      if (interaction) {
+      if (message) {
         const finalResponse = lastAssistantMessage || piOutput;
         const cleanedOutput = stripAnsi(finalResponse.trim());
         const truncatedOutput =
           cleanedOutput.length > 1900
             ? "..." + cleanedOutput.slice(-1900)
             : cleanedOutput;
-        interaction.followUp(
-          truncatedOutput || "Task completed successfully (no output).",
-        );
-      } else if (statusMessage) {
-        const finalResponse = lastAssistantMessage || piOutput;
-        const cleanedOutput = stripAnsi(finalResponse.trim());
-        const truncatedOutput =
-          cleanedOutput.length > 1900
-            ? "..." + cleanedOutput.slice(-1900)
-            : cleanedOutput;
-        statusMessage.reply(
+        message.reply(
           truncatedOutput || "Task completed successfully (no output).",
         );
       }
@@ -349,19 +256,11 @@ Context:
       }
 
       currentStatus = `Failed with code ${code}.`;
-      await updateDiscordStatus(true);
 
-      if (interaction) {
-        if (errorMsg.length > 2000) {
-          errorMsg = errorMsg.slice(0, 1997) + "...";
-        }
-        interaction.followUp(errorMsg);
-      } else if (statusMessage) {
-        if (errorMsg.length > 2000) {
-          errorMsg = errorMsg.slice(0, 1997) + "...";
-        }
-        statusMessage.reply(errorMsg);
+      if (errorMsg.length > 2000) {
+        errorMsg = errorMsg.slice(0, 1997) + "...";
       }
+      message.reply(errorMsg);
       log(`pi failed with code ${code}.`);
     }
   });
