@@ -3,12 +3,14 @@ import "dotenv/config";
 import { Client, GatewayIntentBits, Partials } from "discord.js";
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
 import stripAnsi from "strip-ansi";
 
 import {
   createAgentSession,
+  DefaultResourceLoader,
+  ModelRuntime,
   SessionManager,
+  truncateLine,
 } from "@earendil-works/pi-coding-agent";
 
 const client = new Client({
@@ -161,7 +163,7 @@ client.on("messageCreate", async (message) => {
 /** this triggers a one-off run of the agent, separate from the periodic cron job
  * @import {OmitPartialGroupDMChannel, Message} from 'discord.js'
  @param {OmitPartialGroupDMChannel<Message<boolean>>} message - the discord message that triggered the agent run */
-async function runCycle(message) {
+async function runCycle(message = null) {
   isRunning = true;
 
   const prompt = `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
@@ -185,106 +187,65 @@ Context:
 - Current working directory: ${config.workDir}
 `;
 
-  let piOutput = "";
-  let piError = "";
   let lastAssistantMessage = "";
-  let currentStatus = "Starting...";
-
-  const piArgs = [
-    "--provider",
-    MODEL_PROVIDER,
-    "--model",
-    MODEL_CODE,
-    "--mode",
-    "json",
-    prompt,
-  ];
-
-  if (process.env.PI_SKILLS) {
-    piArgs.push("--skill", process.env.PI_SKILLS);
-  }
-
-  log(`Executing: pi ${piArgs.join(" ")} in ${config.workDir}`);
 
   const cwd = config.workDir;
+  const runtime = await ModelRuntime.create();
+
+  const openrouter_gemini = runtime.getModel(
+    "openrouter",
+    "google/gemini-3.7-flash",
+  );
+
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir: getPaths().configDir,
+    appendSystemPromptOverride: (base) => [...base, prompt],
+  });
 
   // Use default tools for custom cwd
   const { session } = await createAgentSession({
     cwd,
-    sessionManager: SessionManager.create(cwd),
-    model: MODEL_CODE,
+    resourceLoader,
+    sessionManager: SessionManager.create(cwd, getPaths().piSessionDir),
+    model: openrouter_gemini,
+    thinkingLevel: "low",
   });
 
-  const piProcess = spawn("pi", piArgs, {
-    stdio: ["inherit", "pipe", "pipe"],
-    cwd: config.workDir,
-  });
+  // https://github.com/earendil-works/pi/blob/74786a748f5314cc2127ebbcfa2d732e9b8433f5/packages/coding-agent/src/core/agent-session.ts#L143
+  session.subscribe((event) => {
+    switch (event.type) {
+      case "message_update":
+        break;
+      case "agent_settled":
+        isRunning = false;
+        currentRunningTask = null;
+        // Check if this was a quota pause
+        log("pi finished successfully.");
+        lastAssistantMessage = session.getLastAssistantText();
 
-  piProcess.on("error", async (err) => {
-    isRunning = false;
-    currentRunningTask = null;
-    pausedTaskInfo = null;
-    log(`Failed to start pi process: ${err.message}`);
-    currentStatus = `Failed to start.`;
-    if (message) message.reply(`Failed to start pi process: ${err.message}`);
-    if (isOneShot || !process.env.DISCORD_TOKEN) {
-      process.exit(1);
-    }
-  });
-
-  piProcess.on("close", async (code) => {
-    isRunning = false;
-    currentRunningTask = null;
-    // Check if this was a quota pause
-    if (code === 0) {
-      log("pi finished successfully.");
-
-      if (message) {
-        const finalResponse = lastAssistantMessage || piOutput;
-        const cleanedOutput = stripAnsi(finalResponse.trim());
-        const truncatedOutput =
-          cleanedOutput.length > 1900
-            ? "..." + cleanedOutput.slice(-1900)
-            : cleanedOutput;
-        message.reply(
-          truncatedOutput || "Task completed successfully (no output).",
-        );
-      }
-    } else {
-      let errorMsg = `**pi failed with code ${code}**\n\n`;
-
-      const cleanError = stripAnsi(piError.trim());
-      const cleanOutput = stripAnsi(piOutput.trim());
-
-      if (cleanError) {
-        const truncatedError =
-          cleanError.length > 800 ? "..." + cleanError.slice(-800) : cleanError;
-        errorMsg += `**Error Output:**\n\`\`\`\n${truncatedError}\n\`\`\`\n`;
-      }
-
-      if (cleanOutput) {
-        const truncatedOutput =
-          cleanOutput.length > 800
-            ? "..." + cleanOutput.slice(-800)
-            : cleanOutput;
-        errorMsg += `**Standard Output:**\n\`\`\`\n${truncatedOutput}\n\`\`\``;
-      }
-
-      if (!cleanError && !cleanOutput) {
-        errorMsg += "No output or error messages were captured.";
-      }
-
-      currentStatus = `Failed with code ${code}.`;
-
-      if (errorMsg.length > 2000) {
-        errorMsg = errorMsg.slice(0, 1997) + "...";
-      }
-      if (message) message.reply(errorMsg);
-      log(`pi failed with code ${code}.`);
-    }
-
-    if (isOneShot || !process.env.DISCORD_TOKEN) {
-      process.exit(code ?? 0);
+        if (message) {
+          const finalResponse = lastAssistantMessage;
+          const cleanedOutput = stripAnsi(finalResponse.trim());
+          const truncatedOutput =
+            cleanedOutput.length > 1900
+              ? "..." + cleanedOutput.slice(-1900)
+              : cleanedOutput;
+          message.reply(
+            truncatedOutput || "Task completed successfully (no output).",
+          );
+        }
+        break;
+      case "auto_retry_end":
+        isRunning = false;
+        currentRunningTask = null;
+        pausedTaskInfo = null;
+        log(`pi failed: ${event.finalError}`);
+        if (message)
+          message.reply(
+            `pi has failed: ${truncateLine(event.finalError, 1999).text}`,
+          );
+        break;
     }
   });
 }

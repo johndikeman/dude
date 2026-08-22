@@ -1,2 +1,5 @@
 DISCORD_TOKEN="op://AI/agent smith discord bot token/credential"
-GEMINI_JSON_TOKEN="op://AI/gemini-cli auth token/credential"
+GH_TOKEN="op://AI/dudeagent-github-pat/token"
+OB_EMAIL="op://AI/obsidian.md/username"
+OB_PASSWORD="op://AI/obsidian.md/password"
+OPENROUTER_API_KEY="op://AI/OpenRouter API Key - pi-ovhcloud-vps/credential"
