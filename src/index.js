@@ -6,6 +6,11 @@ import path from "path";
 import { spawn } from "child_process";
 import stripAnsi from "strip-ansi";
 
+import {
+  createAgentSession,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -16,10 +21,12 @@ const client = new Client({
 });
 
 const getPaths = () => {
-  const configDir = process.env.DUDE_CONFIG_DIR || process.cwd();
-  const obsidianDir = process.env.OBSIDIAN_DIR || process.cwd();
+  const configDir = process.env.DUDE_CONFIG_DIR;
+  const piSessionDir = process.env.PI_SESSION_DIR;
+  const obsidianDir = process.env.OBSIDIAN_DIR;
   return {
     configDir,
+    piSessionDir,
     tasksFile: path.join(obsidianDir, "ai-tasks.md"),
     configFile: path.join(configDir, "config.json"),
     logFile: path.join(configDir, "agent.log"),
@@ -167,10 +174,10 @@ you can clone other repositories if needed.
 Create a feature branch to work on, REMEMBER TO ALWAYS FIRST pull in the most recent 'main' branch and use it as the base of your feature branch in case another user has made changes, to avoid a merge conflict.
 when appropriate, write testcases to test new code.
 Then, commit the code to the feature branch and open a PR using gh cli.
+the task files have obsidian links to other files, which contain the full instructions for the task. if feedback is required, leave a note to myself and your future self runs in this file and quit. also log the actions you take and general design in this file as well.
 When the task is complete, mark it as done in the task file (${getPaths().tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
-Please add output summarizing the work completed to the files referenced for each particular task.
 
-previous session logs can be found in ~/.pi/agent/sessions/
+previous session logs can be found in ${getPaths().piSessionDir} 
 use lowercase writing and a semi-informal tone.
 
 Context:
@@ -198,6 +205,15 @@ Context:
   }
 
   log(`Executing: pi ${piArgs.join(" ")} in ${config.workDir}`);
+
+  const cwd = config.workDir;
+
+  // Use default tools for custom cwd
+  const { session } = await createAgentSession({
+    cwd,
+    sessionManager: SessionManager.create(cwd),
+    model: MODEL_CODE,
+  });
 
   const piProcess = spawn("pi", piArgs, {
     stdio: ["inherit", "pipe", "pipe"],

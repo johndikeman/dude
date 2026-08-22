@@ -140,6 +140,12 @@
                 description = "Path to the local Obsidian vault containing ai-tasks.md.";
               };
 
+              piSessionDir = lib.mkOption {
+                type = lib.types.str;
+                default = "${config.configDirectory}/sessions/";
+                description = "Path to the place where the pi session files are saved.";
+              };
+
               opvarsFile = lib.mkOption {
                 type = lib.types.str;
                 default = "${cfg.package}/.opvars";
@@ -194,6 +200,7 @@
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.configDirectory}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.workingDirectory}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianDir}"
+                    "${pkgs.coreutils}/bin/mkdir -p ${cfg.piSessionDir}"
                     "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- gh auth login --with-token $GH_TOKEN"
                     "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob login --email=$OB_EMAIL --password=$OB_PW"
                   ]
@@ -210,6 +217,7 @@
                   Environment = [
                     "DUDE_CONFIG_DIR=${cfg.configDirectory}"
                     "OBSIDIAN_DIR=${cfg.obsidianDir}"
+                    "PI_SESSION_DIR=${cfg.piSessionDir}"
                     "PI_SKILLS=${self.packages.${pkgs.stdenv.hostPlatform.system}.skills}/skills"
                     "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
                     "PATH=${
