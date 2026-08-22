@@ -2,3 +2,4 @@ x finish the actual pi sdk implementation in index.js
 x collect all the env variables required and set up service account
 - set new 1p service acc on vps
 - reconfigure github actions (upadte dude flake + make PR on dotfiles/vps_nix on push)
+- set the dude git settings so commits show under it
