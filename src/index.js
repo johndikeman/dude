@@ -211,6 +211,9 @@ Context:
     log(`Failed to start pi process: ${err.message}`);
     currentStatus = `Failed to start.`;
     if (message) message.reply(`Failed to start pi process: ${err.message}`);
+    if (isOneShot || !process.env.DISCORD_TOKEN) {
+      process.exit(1);
+    }
   });
 
   piProcess.on("close", async (code) => {
@@ -260,10 +263,31 @@ Context:
       if (errorMsg.length > 2000) {
         errorMsg = errorMsg.slice(0, 1997) + "...";
       }
-      message.reply(errorMsg);
+      if (message) message.reply(errorMsg);
       log(`pi failed with code ${code}.`);
+    }
+
+    if (isOneShot || !process.env.DISCORD_TOKEN) {
+      process.exit(code ?? 0);
     }
   });
 }
 
-client.login(process.env.DISCORD_TOKEN);
+const isOneShot =
+  process.argv.includes("--once") ||
+  process.argv.includes("--cron") ||
+  process.argv.includes("--run");
+
+if (isOneShot) {
+  initializeModelSettings();
+  log("Starting one-off scheduled agent cycle...");
+  runCycle();
+} else if (process.env.DISCORD_TOKEN) {
+  client.login(process.env.DISCORD_TOKEN);
+} else {
+  log(
+    "No DISCORD_TOKEN provided and --once not specified. Running single cycle...",
+  );
+  initializeModelSettings();
+  runCycle();
+}
