@@ -260,6 +260,7 @@
                       ExecStartPre = [
                         "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianSync.vaultPath}"
                         "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob login --email=$OB_EMAIL --password=$OB_PW"
+                        "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync-setup --vault \"main\" --path ${cfg.obsidianSync.vaultPath}"
                       ];
                       ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync --continuous --path ${cfg.obsidianSync.vaultPath}";
                       Restart = "always";
