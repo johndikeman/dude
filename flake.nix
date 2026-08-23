@@ -142,7 +142,7 @@
 
               piSessionDir = lib.mkOption {
                 type = lib.types.str;
-                default = "${config.configDirectory}/sessions/";
+                default = "${cfg.configDirectory}/sessions/";
                 description = "Path to the place where the pi session files are saved.";
               };
 
