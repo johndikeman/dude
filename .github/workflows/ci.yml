@@ -6,56 +6,36 @@ on:
   pull_request:
     branches: [ main ]
 
+# we need to clone the repo, use nix to update the flake, commit the flake.lock update, then push + open a pr
 jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'npm'
-        
-    - name: Install dependencies
-      run: npm ci
-      
-    - name: Run unit tests
-      run: npm run test:unit
-      
-    - name: Run acceptance tests
-      run: npm run test:acceptance
-      
-    - name: Run audit tests
-      run: npm run test:audit
-      
-    - name: Run quota tests
-      run: npm run test:quota
-      
-    - name: Run safeguard tests
-      run: npm run test:safeguard
-
-  deploy:
+  propose-vps-update:
     runs-on: ubuntu-latest
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            set -e
-            [ -f /nix/var/nix/profiles/default/etc/profile.d/nix.sh ] && . /nix/var/nix/profiles/default/etc/profile.d/nix.sh
-            export PATH=$PATH:/nix/var/nix/profiles/default/bin:~/.nix-profile/bin
-            cd ~/.config/home-manager
-            git pull origin vps_nix
-            nix flake update dude
-            home-manager switch
-            git add flake.lock
-            git commit -m "chore: update dude flake.lock [skip ci]" || true
-            git push origin vps_nix
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          GH_TOKEN: "op://dude GHA SA/dudeagent-github-pat/token"
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: make branch + update + commit + push
+      - run: |
+        gh repo clone johndikeman/dotfiles \
+          cd dotfiles \
+          git checkout vps_nix \
+          git checkout -b update-dude-${{github.sha}} \
+          nix flake update dude \
+          git add flake.lock \
+          git commit -m "chore: update dude to ${{github.sha}}" \
+          git push origin update-dude-${{github.sha}}
+      - name: open pr
+      - run: |
+        gh pr create -B vps_nix --fill
