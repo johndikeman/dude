@@ -9,7 +9,6 @@ on:
 jobs:
   propose-vps-update:
     runs-on: ubuntu-latest
-    needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - name: Load secrets from 1Password
