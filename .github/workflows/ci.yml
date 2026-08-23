@@ -27,15 +27,15 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
       - name: make branch + update + commit + push
-      - run: |
-        gh repo clone johndikeman/dotfiles 
-        cd dotfiles 
-        git checkout vps_nix 
-        git checkout -b update-dude-${{github.sha}} 
-        nix flake update dude 
-        git add flake.lock 
-        git commit -m "chore: update dude to ${{github.sha}}" 
-        git push origin update-dude-${{github.sha}}
+        run: |
+          gh repo clone johndikeman/dotfiles 
+          cd dotfiles 
+          git checkout vps_nix 
+          git checkout -b update-dude-${{github.sha}} 
+          nix flake update dude 
+          git add flake.lock 
+          git commit -m "chore: update dude to ${{github.sha}}" 
+          git push origin update-dude-${{github.sha}}
       - name: open pr
-      - run: |
-        gh pr create -B vps_nix --fill
+        run: |
+          gh pr create -B vps_nix --fill
