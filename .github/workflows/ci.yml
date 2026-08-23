@@ -32,6 +32,8 @@ jobs:
           git checkout -b update-dude-${{github.sha}} 
           nix flake update dude 
           git add flake.lock 
+          git config --global user.email "dude@johnf.art"
+          git config --global user.name "dude"
           git commit -m "chore: update dude to ${{github.sha}}" 
           git push origin update-dude-${{github.sha}}
       - name: open pr
