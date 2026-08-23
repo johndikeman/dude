@@ -6,7 +6,6 @@ on:
   pull_request:
     branches: [ main ]
 
-# we need to clone the repo, use nix to update the flake, commit the flake.lock update, then push + open a pr
 jobs:
   propose-vps-update:
     runs-on: ubuntu-latest
