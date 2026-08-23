@@ -39,4 +39,5 @@ jobs:
           git push origin update-dude-${{github.sha}}
       - name: open pr
         run: |
+          cd dotfiles
           gh pr create -B vps_nix --fill
