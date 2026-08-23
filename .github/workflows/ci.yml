@@ -35,6 +35,7 @@ jobs:
           git config --global user.email "dude@johnf.art"
           git config --global user.name "dude"
           git commit -m "chore: update dude to ${{github.sha}}" 
+          gh auth setup-git
           git push origin update-dude-${{github.sha}}
       - name: open pr
         run: |
