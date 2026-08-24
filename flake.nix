@@ -180,7 +180,7 @@
               # 0. Post-activation health check: verify long-running services
               # actually reach "active" state. Failing this aborts activation,
               # which deploy-rs detects and uses to magic-rollback the profile.
-              home.activation.checkDudeServices = lib.hm.dag.entryAfter [ "writeBoundary" ] (
+              home.activation.checkDudeServices = lib.hm.dag.entryAfter [ "reloadSystemd" ] (
                 let
                   systemctl = "/usr/bin/systemctl --user";
                   servicesToCheck = lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService) [
