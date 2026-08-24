@@ -134,6 +134,14 @@ client.once("ready", async () => {
 });
 
 client.on("messageCreate", async (message) => {
+  try {
+    await handleMessage(message);
+  } catch (e) {
+    log(`error handling message ${message.id}: ${e?.message || e}`);
+  }
+});
+
+async function handleMessage(message) {
   // Ignore bot messages
   if (message.author.bot) return;
 
@@ -148,8 +156,13 @@ client.on("messageCreate", async (message) => {
   }
 
   // Check if this is a reply to a bot message
+  // Fetch the referenced message with a hard timeout - this REST call can
+  // hang (rate limits, lost REST connection) and would deadlock the handler.
   const referencedMessage = message.reference
-    ? await message.fetchReference().catch(() => null)
+    ? await Promise.race([
+        message.fetchReference(),
+        new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+      ]).catch(() => null)
     : null;
 
   // or if user directly tagged the bot (works in DMs too)
@@ -167,7 +180,7 @@ client.on("messageCreate", async (message) => {
     return;
   }
   runCycle(message);
-});
+}
 
 /** this triggers a one-off run of the agent, separate from the periodic cron job
  * @import {OmitPartialGroupDMChannel, Message} from 'discord.js'
