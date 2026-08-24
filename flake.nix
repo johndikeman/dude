@@ -116,7 +116,7 @@
             ghAuthScript = pkgs.writeShellScript "dude-gh-auth" ''
               exec ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
                 ${pkgs.bash}/bin/bash -c '
-                  ${pkgs.gh}/bin/gh auth login --with-token "$GH_TOKEN"
+                  ${pkgs.git}/bin/printf '%s' "$GH_TOKEN" | ${pkgs.gh}/bin/gh auth login --with-token
                 '
             '';
           in
