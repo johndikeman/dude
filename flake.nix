@@ -101,6 +101,24 @@
           }:
           let
             cfg = config.services.dude-agent;
+
+            # op run resolves the op:// refs in .opvars and injects them into
+            # the child env; the inner bash then expands them at invocation.
+            # (Expanding $VARS in the same command line as `op run` never
+            # works - they are expanded before injection.)
+            obLoginScript = pkgs.writeShellScript "dude-ob-login" ''
+              exec ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
+                ${pkgs.bash}/bin/bash -c '
+                  ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob login \
+                    --email="$OB_EMAIL" --password="$OB_PASSWORD"
+                '
+            '';
+            ghAuthScript = pkgs.writeShellScript "dude-gh-auth" ''
+              exec ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
+                ${pkgs.bash}/bin/bash -c '
+                  ${pkgs.git}/bin/gh auth login --with-token "$GH_TOKEN"
+                '
+            '';
           in
           {
             options.services.dude-agent = {
@@ -240,8 +258,8 @@
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.workingDirectory}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianDir}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.piSessionDir}"
-                    "${pkgs.bash}/bin/bash -c 'set -a; eval \"$(${pkgs._1password-cli}/bin/op inject --env-file ${cfg.opvarsFile})\"; ${pkgs.git}/bin/gh auth login --with-token \"$GH_TOKEN\"'"
-                    "${pkgs.bash}/bin/bash -c 'set -a; eval \"$(${pkgs._1password-cli}/bin/op inject --env-file ${cfg.opvarsFile})\"; ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob login --email=\"$OB_EMAIL\" --password=\"$OB_PASSWORD\"'"
+                    "${ghAuthScript}"
+                    "${obLoginScript}"
                   ]
                   ++
                     lib.optional (cfg.obsidianSync.enable && !cfg.obsidianSync.separateService)
@@ -306,7 +324,7 @@
                       Type = "simple";
                       ExecStartPre = [
                         "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianSync.vaultPath}"
-                        "${pkgs.bash}/bin/bash -c 'set -a; eval \"$(${pkgs._1password-cli}/bin/op inject --env-file ${cfg.opvarsFile})\"; ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob login --email=\"$OB_EMAIL\" --password=\"$OB_PASSWORD\"'"
+                        "${obLoginScript}"
                         "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync-setup --vault \"main\" --path ${cfg.obsidianSync.vaultPath}"
                       ];
                       ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync --continuous --path ${cfg.obsidianSync.vaultPath}";
