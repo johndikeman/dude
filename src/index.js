@@ -185,6 +185,7 @@ use lowercase writing and a semi-informal tone.
 Context:
 - Task File: ${getPaths().tasksFile}
 - Current working directory: ${config.workDir}
+${message ? "\n you're being invoked as a one-off through discord, user message is:\n" + message.content : ""}
 `;
 
   let lastAssistantMessage = "";
