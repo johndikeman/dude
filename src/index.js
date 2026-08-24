@@ -148,15 +148,13 @@ client.on("messageCreate", async (message) => {
     ? await message.fetchReference().catch(() => null)
     : null;
 
-  // or if user directly tagged the bot
-  const taggedBotDirectly = message.mentions.members.has(client.user.id);
+  // or if user directly tagged the bot (works in DMs too)
+  const taggedBotDirectly = message.mentions.has(client.user.id);
 
-  if (
-    !referencedMessage ||
-    !referencedMessage.author?.bot ||
-    !taggedBotDirectly
-  )
-    return;
+  const repliedToBot = referencedMessage?.author?.bot === true;
+
+  // Trigger on a reply to one of the bot's messages OR a direct tag.
+  if (!repliedToBot && !taggedBotDirectly) return;
   runCycle(message);
 });
 
