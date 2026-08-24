@@ -193,10 +193,7 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
   const cwd = config.workDir;
   const runtime = await ModelRuntime.create();
 
-  const openrouter_gemini = runtime.getModel(
-    "openrouter",
-    "google/gemini-3.7-flash",
-  );
+  const openrouter_gemini = runtime.getModel("openrouter", "stealth/ox-alpha");
 
   const resourceLoader = new DefaultResourceLoader({
     cwd,
