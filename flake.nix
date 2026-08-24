@@ -241,7 +241,7 @@
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianDir}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.piSessionDir}"
                     "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- gh auth login --with-token $GH_TOKEN"
-                    "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob login --email=$OB_EMAIL --password=$OB_PW"
+                    "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob login --email=$OB_EMAIL --password=$OB_PASSWORD"
                   ]
                   ++
                     lib.optional (cfg.obsidianSync.enable && !cfg.obsidianSync.separateService)
@@ -306,7 +306,7 @@
                       Type = "simple";
                       ExecStartPre = [
                         "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianSync.vaultPath}"
-                        "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob login --email=$OB_EMAIL --password=$OB_PW"
+                        "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob login --email=$OB_EMAIL --password=$OB_PASSWORD"
                         "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync-setup --vault \"main\" --path ${cfg.obsidianSync.vaultPath}"
                       ];
                       ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync --continuous --path ${cfg.obsidianSync.vaultPath}";
