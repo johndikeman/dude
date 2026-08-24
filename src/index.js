@@ -275,6 +275,14 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
         break;
     }
   });
+
+  // Actually kick off the agent run - without this the session sits idle.
+  log("runCycle: sending prompt to agent...");
+  session.prompt(prompt).catch((e) => {
+    isRunning = false;
+    log(`runCycle: prompt failed: ${e?.message || e}`);
+    if (message) message.reply(`agent failed to start: ${e?.message || e}`);
+  });
 }
 
 const isOneShot =
