@@ -177,6 +177,45 @@
             };
 
             config = lib.mkIf cfg.enable {
+              # 0. Post-activation health check: verify long-running services
+              # actually reach "active" state. Failing this aborts activation,
+              # which deploy-rs detects and uses to magic-rollback the profile.
+              home.activation.checkDudeServices = lib.hm.dag.entryAfter [ "writeBoundary" ] (
+                let
+                  systemctl = "/usr/bin/systemctl --user";
+                  servicesToCheck = lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService) [
+                    "obsidian-sync.service"
+                  ];
+                  timeoutSecs = 90;
+                in
+                lib.optionalString (servicesToCheck != [ ]) ''
+                  check_service() {
+                    local svc="$1"
+                    echo "Waiting for $svc to become active..."
+                    for i in $(seq 1 ${toString (timeoutSecs / 5)}); do
+                      if /usr/bin/systemctl --user is-active --quiet "$svc"; then
+                        echo "$svc is active."
+                        return 0
+                      fi
+                      sleep 5
+                    done
+                    echo "ERROR: $svc failed to become active within ${toString timeoutSecs}s" >&2
+                    /usr/bin/systemctl --user status "$svc" --no-pager -l >&2 || true
+                    return 1
+                  }
+
+                  # Reset any rate-limit/failed state so we get a clean start.
+                  ${lib.concatMapStringsSep "\n" (svc: ''
+                    ${systemctl} reset-failed ${svc} 2>/dev/null || true
+                    ${systemctl} start ${svc}
+                  '') servicesToCheck}
+
+                  ${lib.concatMapStringsSep "\n" (svc: ''
+                    check_service ${svc}
+                  '') servicesToCheck}
+                ''
+              );
+
               # 1. Dude Agent Service (runs a single agent task cycle)
               systemd.user.services.dude-agent = {
                 Unit = {
