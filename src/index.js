@@ -137,6 +137,10 @@ client.on("messageCreate", async (message) => {
   // Ignore bot messages
   if (message.author.bot) return;
 
+  log(
+    `discord message from ${message.author.tag} (${message.channelId}, dm=${!message.guild})`,
+  );
+
   // Store channel ID for autoNext status updates
   if (message.channelId && config.lastChannelId !== message.channelId) {
     config.lastChannelId = message.channelId;
@@ -152,9 +156,16 @@ client.on("messageCreate", async (message) => {
   const taggedBotDirectly = message.mentions.has(client.user.id);
 
   const repliedToBot = referencedMessage?.author?.bot === true;
+  const isDM = !message.guild;
 
-  // Trigger on a reply to one of the bot's messages OR a direct tag.
-  if (!repliedToBot && !taggedBotDirectly) return;
+  // Trigger on a reply to one of the bot's messages, a direct tag,
+  // or any non-bot DM.
+  if (!repliedToBot && !taggedBotDirectly && !isDM) {
+    log(
+      `ignoring message ${message.id}: repliedToBot=${repliedToBot} taggedBot=${taggedBotDirectly}`,
+    );
+    return;
+  }
   runCycle(message);
 });
 
