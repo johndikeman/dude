@@ -113,12 +113,6 @@
                     --email="$OB_EMAIL" --password="$OB_PASSWORD"
                 '
             '';
-            ghAuthScript = pkgs.writeShellScript "dude-gh-auth" ''
-              exec ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
-                ${pkgs.bash}/bin/bash -c '
-                  ${pkgs.git}/bin/printf '%s' "$GH_TOKEN" | ${pkgs.gh}/bin/gh auth login --with-token
-                '
-            '';
           in
           {
             options.services.dude-agent = {
@@ -262,7 +256,6 @@
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.workingDirectory}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianDir}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.piSessionDir}"
-                    "${ghAuthScript}"
                     "${obLoginScript}"
                   ]
                   ++
@@ -324,7 +317,6 @@
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.workingDirectory}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianDir}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.piSessionDir}"
-                    "${ghAuthScript}"
                     "${obLoginScript}"
                   ];
                   ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ${cfg.package}/bin/dude-agent";
