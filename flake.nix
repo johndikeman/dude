@@ -186,9 +186,31 @@
                   description = "Path to the local Obsidian vault to sync.";
                 };
               };
+
+              gitUserName = lib.mkOption {
+                type = lib.types.str;
+                default = "dudeagent";
+                description = "Git user name used by the agent for commits.";
+              };
+
+              gitUserEmail = lib.mkOption {
+                type = lib.types.str;
+                default = "dude@johnf.art";
+                description = "Git user email used by the agent for commits.";
+              };
             };
 
             config = lib.mkIf cfg.enable {
+              # Git identity for the agent.  Using mkDefault so consumers can
+              # override in their own home.nix if desired.
+              programs.git = {
+                enable = lib.mkDefault true;
+                settings.user = {
+                  name = lib.mkDefault cfg.gitUserName;
+                  email = lib.mkDefault cfg.gitUserEmail;
+                };
+              };
+
               # 0. Post-activation health check: verify long-running services
               # actually reach "active" state. Failing this aborts activation,
               # which deploy-rs detects and uses to magic-rollback the profile.
