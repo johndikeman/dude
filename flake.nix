@@ -201,9 +201,13 @@
               home.activation.checkDudeServices = lib.hm.dag.entryAfter [ "reloadSystemd" ] (
                 let
                   systemctl = "/usr/bin/systemctl --user";
-                  servicesToCheck = lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService) [
-                    "obsidian-sync.service"
-                  ];
+                  servicesToCheck =
+                    [
+                      "dude-agent-watch.service"
+                    ]
+                    ++ lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService) [
+                      "obsidian-sync.service"
+                    ];
                   timeoutSecs = 90;
                 in
                 lib.optionalString (servicesToCheck != [ ]) ''
@@ -296,7 +300,65 @@
                 };
               };
 
-              # 2. Dude Agent Timer (schedules dude-agent runs)
+              # 2. Dude Agent Watch Service (long-running Discord trigger listener)
+              systemd.user.services.dude-agent-watch = {
+                Unit = {
+                  Description = "Dude Agent - Discord Trigger Watcher";
+                  After = [
+                    "network.target"
+                  ]
+                  ++ lib.optional (
+                    cfg.obsidianSync.enable && cfg.obsidianSync.separateService
+                  ) "obsidian-sync.service";
+                  Wants = lib.optional (
+                    cfg.obsidianSync.enable && cfg.obsidianSync.separateService
+                  ) "obsidian-sync.service";
+                  StartLimitBurst = "5";
+                  StartLimitIntervalSec = "120s";
+                };
+                Service = {
+                  Type = "simple";
+                  WorkingDirectory = cfg.workingDirectory;
+                  ExecStartPre = [
+                    "${pkgs.coreutils}/bin/mkdir -p ${cfg.configDirectory}"
+                    "${pkgs.coreutils}/bin/mkdir -p ${cfg.workingDirectory}"
+                    "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianDir}"
+                    "${pkgs.coreutils}/bin/mkdir -p ${cfg.piSessionDir}"
+                    "${ghAuthScript}"
+                    "${obLoginScript}"
+                  ];
+                  ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ${cfg.package}/bin/dude-agent";
+                  Restart = "always";
+                  RestartSec = "10s";
+                  Environment = [
+                    "DUDE_CONFIG_DIR=${cfg.configDirectory}"
+                    "OBSIDIAN_DIR=${cfg.obsidianDir}"
+                    "PI_SESSION_DIR=${cfg.piSessionDir}"
+                    "PI_SKILLS=${self.packages.${pkgs.stdenv.hostPlatform.system}.skills}/skills"
+                    "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
+                    "PATH=${
+                      lib.makeBinPath [
+                        pkgs.git
+                        pkgs.gh
+                        pkgs.google-cloud-sdk
+                        pkgs.nodejs_24
+                        pkgs._1password-cli
+                        pkgs.chromium
+                        pkgs.coreutils
+                      ]
+                    }:${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin:/usr/bin:/bin"
+                  ];
+                  EnvironmentFile = [
+                    "-${cfg.workingDirectory}/.env"
+                    "-${cfg.configDirectory}/.env"
+                  ];
+                };
+                Install = {
+                  WantedBy = [ "default.target" ];
+                };
+              };
+
+              # 3. Dude Agent Timer (schedules dude-agent runs)
               systemd.user.timers.dude-agent = {
                 Unit = {
                   Description = "Dude Agent Scheduled Execution Timer";
@@ -310,7 +372,7 @@
                 };
               };
 
-              # 3. Dedicated continuous Obsidian sync service (when separateService = true)
+              # 4. Dedicated continuous Obsidian sync service (when separateService = true)
               systemd.user.services.obsidian-sync =
                 lib.mkIf (cfg.obsidianSync.enable && cfg.obsidianSync.separateService)
                   {
