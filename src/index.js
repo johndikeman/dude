@@ -179,7 +179,9 @@ async function handleMessage(message) {
     );
     return;
   }
-  runCycle(message);
+  runCycle(message).catch((e) =>
+    log(`runCycle: failed: ${e?.message || e}`),
+  );
 }
 
 /** this triggers a one-off run of the agent, separate from the periodic cron job
@@ -187,6 +189,7 @@ async function handleMessage(message) {
  @param {OmitPartialGroupDMChannel<Message<boolean>>} message - the discord message that triggered the agent run */
 async function runCycle(message = null) {
   isRunning = true;
+  log(`runCycle: starting (${message ? "discord-triggered" : "scheduled"})`);
 
   const prompt = `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
 Current date: ${new Date().toLocaleString("en-US")}
@@ -213,7 +216,9 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
   let lastAssistantMessage = "";
 
   const cwd = config.workDir;
+  log("runCycle: creating model runtime...");
   const runtime = await ModelRuntime.create();
+  log("runCycle: model runtime created");
 
   const openrouter_gemini = runtime.getModel("openrouter", "stealth/ox-alpha");
 
@@ -224,6 +229,7 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
   });
 
   // Use default tools for custom cwd
+  log("runCycle: creating agent session...");
   const { session } = await createAgentSession({
     cwd,
     resourceLoader,
@@ -231,6 +237,7 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
     model: openrouter_gemini,
     thinkingLevel: "low",
   });
+  log("runCycle: agent session created");
 
   // https://github.com/earendil-works/pi/blob/74786a748f5314cc2127ebbcfa2d732e9b8433f5/packages/coding-agent/src/core/agent-session.ts#L143
   session.subscribe((event) => {
