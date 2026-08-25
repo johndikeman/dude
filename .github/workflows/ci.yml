@@ -40,4 +40,4 @@ jobs:
       - name: open pr
         run: |
           cd dotfiles
-          gh pr create -B vps_nix --fill
+          gh pr create -B vps_nix --fill --assignee johndikeman
