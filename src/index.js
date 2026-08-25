@@ -238,6 +238,7 @@ async function handleMessage(message) {
  @param {OmitPartialGroupDMChannel<Message<boolean>>} message - the discord message that triggered the agent run */
 async function runCycle(message = null, sessionFileToResume = null) {
   isRunning = true;
+  lastRunHitQuotaLimit = false;
   log(`runCycle: starting (${message ? "discord-triggered" : "scheduled"})${sessionFileToResume ? " [resumed]" : ""}`);
 
   const prompt = `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
@@ -319,11 +320,12 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
         lastAssistantMessage = session.getLastAssistantText();
 
         if (message) {
-          if (lastRunHitQuotaLimit || lastAssistantMessage == null) {
+          if (lastRunHitQuotaLimit) {
+            // auto_retry_end already replied with the failure details.
+            log("run ended due to quota limit; failure already surfaced");
+          } else if (lastAssistantMessage == null) {
             const reply = await message.reply(
-              lastRunHitQuotaLimit
-                ? `run failed: model ${MODEL_PROVIDER}/${MODEL_CODE} hit its credit/quota limit${USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE ? `; next run will use fallback ${FALLBACK_MODEL_PROVIDER}/${FALLBACK_MODEL_CODE}` : ". raise the key's limit at openrouter.ai/settings/keys"}`
-                : "Task completed successfully (no output).",
+              "Task completed successfully (no output).",
             );
             if (session.sessionFile) {
               const map = loadDiscordSessionMap();
