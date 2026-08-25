@@ -1,49 +1,21 @@
-# Self-Improving AI Agent
+# hey dude!
 
-This agent uses `pi-mono-agent` (coding agent harness) to perform tasks on its own codebase or other projects.
+dude is a lightweight + opinionated orchestration layer for autonomous remote runs of [pi-agent](https://github.com/earendil-works/pi)
 
-## Tech Stack
-- **pi-mono-agent**: The underlying coding agent.
-- **Nix Flakes**: For dependency management.
-- **Discord.js**: For communication with the user.
-- **Google Cloud SDK**: For Gemini API authentication.
-- **GitHub CLI (gh)**: For creating Pull Requests.
+I wanted a platform to run llm agents outside of my personal computer, while giving programmatic access to the resources it needs.
 
-## Prerequisites
-1. A Discord Bot Token.
-2. Google AI subscription and `gcloud` authenticated.
-3. GitHub personal access token configured for `gh`.
+It uses 1password to manage required credentials, obsidian for communication and documentation, and discord for one-off triggers.
 
-## Setup
-1. Clone this repository on your VPS.
-2. Ensure Nix is installed with Flakes enabled.
-3. Create a `.env` file based on `.env.example` and add your `DISCORD_TOKEN`.
-4. Run `nix develop` to enter the shell with all dependencies.
-5. Authenticate `gcloud`:
-   ```bash
-   gcloud auth login
-   gcloud config set project <YOUR_PROJECT_ID>
-   ```
-6. Authenticate `gh`:
-   ```bash
-   gh auth login
-   ```
-7. Start the agent:
-   ```bash
-   npm start
-   ```
+the agent runs periodically, checking in on tasks in a particular obsidian file.
 
-## Discord Commands
-- `!task <description>`: Add a new task to the queue.
-- `!tasks`: List all pending tasks.
-- `!status`: Show current working directory and queue status.
-- `!workdir <path>`: Change the directory where the agent works.
-- `!start`: Start working on the next task in the queue.
-- `!restart`: Stop the agent (use with a process manager like `systemd` or `pm2` to auto-restart).
+it's deployed via nix flakes, and exposes three services:
+1. periodic triggers (configurable, defaults to every 6 hours)
+2. on-demand triggers via discord
+3. obsidian sync service via obsidian-headless
 
-## Self-Improvement
-The agent can modify its own code in `src/` and `flake.nix`. When it completes a task, it will automatically:
-1. Create a new git branch.
-2. Commit the changes.
-3. Push to GitHub.
-4. Open a Pull Request.
+
+credit to brother qt the foster cat for the pfp.
+
+## deployment
+
+This repo contains an action to open a PR to update itself in my [VPS nix repo](https://github.com/johndikeman/dotfiles/tree/vps_nix). pushes to that branch trigger a deploy-rs action which redeploys the configuration, with auto-rollback baked in via nix home-manager.
