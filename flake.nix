@@ -107,6 +107,12 @@
             # (Expanding $VARS in the same command line as `op run` never
             # works - they are expanded before injection.)
             obLoginScript = pkgs.writeShellScript "dude-ob-login" ''
+              # Nuke any stale token so ob login performs a fresh authentication
+              # regardless of whether op:// injection hiccups or the cached
+              # token has silently expired on the server side.
+              AUTH_TOKEN_FILE="${config.home.homeDirectory}/.config/obsidian-headless/auth_token"
+              rm -f "$AUTH_TOKEN_FILE"
+
               exec ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
                 ${pkgs.bash}/bin/bash -c '
                   ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob login \
@@ -184,6 +190,17 @@
                   type = lib.types.str;
                   default = cfg.obsidianDir;
                   description = "Path to the local Obsidian vault to sync.";
+                };
+
+                runtimeMaxSec = lib.mkOption {
+                  type = lib.types.str;
+                  default = "30m";
+                  description = ''
+                    Maximum continuous runtime before systemd terminates and restarts
+                    the obsidian-sync service.  This forces a token refresh via
+                    ExecStartPre even when obsidian-headless would otherwise loop
+                    forever on a stale auth token.
+                  '';
                 };
               };
 
@@ -398,6 +415,7 @@
                     };
                     Service = {
                       Type = "simple";
+                      RuntimeMaxSec = cfg.obsidianSync.runtimeMaxSec;
                       ExecStartPre = [
                         "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianSync.vaultPath}"
                         "${obLoginScript}"
