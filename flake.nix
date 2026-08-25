@@ -226,6 +226,9 @@
                   name = lib.mkDefault cfg.gitUserName;
                   email = lib.mkDefault cfg.gitUserEmail;
                 };
+                settings.credential = {
+                  helper = lib.mkDefault "!gh auth git-credential";
+                };
               };
 
               # 0. Post-activation health check: verify long-running services
