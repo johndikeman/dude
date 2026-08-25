@@ -4,6 +4,7 @@ import { Client, GatewayIntentBits, Partials } from "discord.js";
 import fs from "fs";
 import path from "path";
 import stripAnsi from "strip-ansi";
+import { startTypingLoop } from "./typing.js";
 
 import {
   createAgentSession,
@@ -241,6 +242,9 @@ async function runCycle(message = null, sessionFileToResume = null) {
   lastRunHitQuotaLimit = false;
   log(`runCycle: starting (${message ? "discord-triggered" : "scheduled"})${sessionFileToResume ? " [resumed]" : ""}`);
 
+  // keep a "typing..." indicator visible in the channel for the whole run
+  const stopTyping = message ? startTypingLoop(message.channel, { log }) : null;
+
   const prompt = `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
 Current date: ${new Date().toLocaleString("en-US")}
 Your goal is to implement the tasks/goals laid out for you in ${getPaths().tasksFile}. 
@@ -319,6 +323,7 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
         log("pi finished successfully.");
         lastAssistantMessage = session.getLastAssistantText();
 
+        stopTyping?.();
         if (message) {
           if (lastRunHitQuotaLimit) {
             // auto_retry_end already replied with the failure details.
@@ -352,6 +357,7 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
         }
         break;
       case "auto_retry_end":
+        stopTyping?.();
         isRunning = false;
         currentRunningTask = null;
         pausedTaskInfo = null;
@@ -381,6 +387,7 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
     : prompt;
   log("runCycle: sending prompt to agent...");
   session.prompt(promptToSend).catch(async (e) => {
+    stopTyping?.();
     isRunning = false;
     log(`runCycle: prompt failed: ${e?.message || e}`);
     if (message) {
