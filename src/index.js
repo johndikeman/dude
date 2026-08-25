@@ -69,6 +69,7 @@ let config = {
 let isRunning = false;
 let currentRunningTask = null;
 let pausedTaskInfo = null; // Store info about paused tasks for status display
+let lastRunHitQuotaLimit = false;
 
 if (fs.existsSync(getPaths().configFile)) {
   try {
@@ -268,7 +269,18 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
   const runtime = await ModelRuntime.create();
   log("runCycle: model runtime created");
 
-  const openrouter_gemini = runtime.getModel("openrouter", "stealth/ox-alpha");
+  // Use the configured primary model; if the previous run exhausted a
+  // quota/credit limit and a fallback is configured, switch to it.
+  let modelProvider = MODEL_PROVIDER;
+  let modelCode = MODEL_CODE;
+  if (lastRunHitQuotaLimit && USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
+    log(
+      `runCycle: primary model ${MODEL_PROVIDER}/${MODEL_CODE} hit quota limit last run, using fallback ${FALLBACK_MODEL_PROVIDER}/${FALLBACK_MODEL_CODE}`,
+    );
+    modelProvider = FALLBACK_MODEL_PROVIDER;
+    modelCode = FALLBACK_MODEL_CODE;
+  }
+  const model = runtime.getModel(modelProvider, modelCode);
 
   const resourceLoader = new DefaultResourceLoader({
     cwd,
@@ -289,7 +301,7 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
     cwd,
     resourceLoader,
     sessionManager,
-    model: openrouter_gemini,
+    model,
     thinkingLevel: "low",
   });
   log("runCycle: agent session created");
@@ -307,20 +319,33 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
         lastAssistantMessage = session.getLastAssistantText();
 
         if (message) {
-          const finalResponse = lastAssistantMessage;
-          const cleanedOutput = stripAnsi(finalResponse.trim());
-          const truncatedOutput =
-            cleanedOutput.length > 1900
-              ? "..." + cleanedOutput.slice(-1900)
-              : cleanedOutput;
-          const reply = await message.reply(
-            truncatedOutput || "Task completed successfully (no output).",
-          );
-          if (session.sessionFile) {
-            const map = loadDiscordSessionMap();
-            map[reply.id] = { sessionFile: session.sessionFile, timestamp: new Date().toISOString() };
-            saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
-            log(`saved session mapping: reply ${reply.id} -> ${session.sessionFile}`);
+          if (lastRunHitQuotaLimit || lastAssistantMessage == null) {
+            const reply = await message.reply(
+              lastRunHitQuotaLimit
+                ? `run failed: model ${MODEL_PROVIDER}/${MODEL_CODE} hit its credit/quota limit${USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE ? `; next run will use fallback ${FALLBACK_MODEL_PROVIDER}/${FALLBACK_MODEL_CODE}` : ". raise the key's limit at openrouter.ai/settings/keys"}`
+                : "Task completed successfully (no output).",
+            );
+            if (session.sessionFile) {
+              const map = loadDiscordSessionMap();
+              map[reply.id] = { sessionFile: session.sessionFile, timestamp: new Date().toISOString() };
+              saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
+            }
+          } else {
+            const finalResponse = lastAssistantMessage;
+            const cleanedOutput = stripAnsi(finalResponse.trim());
+            const truncatedOutput =
+              cleanedOutput.length > 1900
+                ? "..." + cleanedOutput.slice(-1900)
+                : cleanedOutput;
+            const reply = await message.reply(
+              truncatedOutput || "Task completed successfully (no output).",
+            );
+            if (session.sessionFile) {
+              const map = loadDiscordSessionMap();
+              map[reply.id] = { sessionFile: session.sessionFile, timestamp: new Date().toISOString() };
+              saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
+              log(`saved session mapping: reply ${reply.id} -> ${session.sessionFile}`);
+            }
           }
         }
         break;
@@ -329,6 +354,10 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
         currentRunningTask = null;
         pausedTaskInfo = null;
         log(`pi failed: ${event.finalError}`);
+        if (/402|credit|quota|insufficient/i.test(String(event.finalError))) {
+          lastRunHitQuotaLimit = true;
+          log("quota/credit limit detected; fallback will be used next run if configured");
+        }
         if (message) {
           const reply = await message.reply(
             `pi has failed: ${truncateLine(event.finalError, 1999).text}`,
