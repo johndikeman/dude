@@ -125,6 +125,41 @@ function saveConfig() {
   fs.writeFileSync(getPaths().configFile, JSON.stringify(config, null, 2));
 }
 
+function getDiscordSessionMapPath() {
+  return path.join(getPaths().configDir, "discord-message-sessions.json");
+}
+
+function loadDiscordSessionMap() {
+  const file = getDiscordSessionMapPath();
+  if (fs.existsSync(file)) {
+    try {
+      return JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch (e) {
+      log(`error loading discord session map: ${e.message}`);
+    }
+  }
+  return {};
+}
+
+function saveDiscordSessionMap(map) {
+  try {
+    fs.writeFileSync(getDiscordSessionMapPath(), JSON.stringify(map, null, 2));
+  } catch (e) {
+    log(`error saving discord session map: ${e.message}`);
+  }
+}
+
+function cleanupOldDiscordSessionEntries(map, maxAgeDays = 30) {
+  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  const cleaned = {};
+  for (const [key, value] of Object.entries(map)) {
+    if (value.timestamp && new Date(value.timestamp).getTime() > cutoff) {
+      cleaned[key] = value;
+    }
+  }
+  return cleaned;
+}
+
 client.once("ready", async () => {
   log(`Logged in as ${client.user.tag}!`);
   log(`Current working directory: ${config.workDir}`);
@@ -179,7 +214,20 @@ async function handleMessage(message) {
     );
     return;
   }
-  runCycle(message).catch((e) =>
+
+  let sessionFileToResume = null;
+  if (repliedToBot && referencedMessage) {
+    const map = loadDiscordSessionMap();
+    const entry = map[referencedMessage.id];
+    if (entry?.sessionFile && fs.existsSync(entry.sessionFile)) {
+      sessionFileToResume = entry.sessionFile;
+      log(`found session to resume for message ${referencedMessage.id}: ${sessionFileToResume}`);
+    } else if (entry?.sessionFile) {
+      log(`session file no longer exists for message ${referencedMessage.id}`);
+    }
+  }
+
+  runCycle(message, sessionFileToResume).catch((e) =>
     log(`runCycle: failed: ${e?.message || e}`),
   );
 }
@@ -187,9 +235,9 @@ async function handleMessage(message) {
 /** this triggers a one-off run of the agent, separate from the periodic cron job
  * @import {OmitPartialGroupDMChannel, Message} from 'discord.js'
  @param {OmitPartialGroupDMChannel<Message<boolean>>} message - the discord message that triggered the agent run */
-async function runCycle(message = null) {
+async function runCycle(message = null, sessionFileToResume = null) {
   isRunning = true;
-  log(`runCycle: starting (${message ? "discord-triggered" : "scheduled"})`);
+  log(`runCycle: starting (${message ? "discord-triggered" : "scheduled"})${sessionFileToResume ? " [resumed]" : ""}`);
 
   const prompt = `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
 Current date: ${new Date().toLocaleString("en-US")}
@@ -230,17 +278,24 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
 
   // Use default tools for custom cwd
   log("runCycle: creating agent session...");
+  let sessionManager;
+  if (sessionFileToResume) {
+    sessionManager = SessionManager.open(sessionFileToResume, getPaths().piSessionDir);
+    log(`runCycle: opened existing session ${sessionFileToResume}`);
+  } else {
+    sessionManager = SessionManager.create(cwd, getPaths().piSessionDir);
+  }
   const { session } = await createAgentSession({
     cwd,
     resourceLoader,
-    sessionManager: SessionManager.create(cwd, getPaths().piSessionDir),
+    sessionManager,
     model: openrouter_gemini,
     thinkingLevel: "low",
   });
   log("runCycle: agent session created");
 
   // https://github.com/earendil-works/pi/blob/74786a748f5314cc2127ebbcfa2d732e9b8433f5/packages/coding-agent/src/core/agent-session.ts#L143
-  session.subscribe((event) => {
+  session.subscribe(async (event) => {
     switch (event.type) {
       case "message_update":
         break;
@@ -258,9 +313,15 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
             cleanedOutput.length > 1900
               ? "..." + cleanedOutput.slice(-1900)
               : cleanedOutput;
-          message.reply(
+          const reply = await message.reply(
             truncatedOutput || "Task completed successfully (no output).",
           );
+          if (session.sessionFile) {
+            const map = loadDiscordSessionMap();
+            map[reply.id] = { sessionFile: session.sessionFile, timestamp: new Date().toISOString() };
+            saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
+            log(`saved session mapping: reply ${reply.id} -> ${session.sessionFile}`);
+          }
         }
         break;
       case "auto_retry_end":
@@ -268,20 +329,38 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
         currentRunningTask = null;
         pausedTaskInfo = null;
         log(`pi failed: ${event.finalError}`);
-        if (message)
-          message.reply(
+        if (message) {
+          const reply = await message.reply(
             `pi has failed: ${truncateLine(event.finalError, 1999).text}`,
           );
+          if (session.sessionFile) {
+            const map = loadDiscordSessionMap();
+            map[reply.id] = { sessionFile: session.sessionFile, timestamp: new Date().toISOString() };
+            saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
+            log(`saved session mapping: reply ${reply.id} -> ${session.sessionFile}`);
+          }
+        }
         break;
     }
   });
 
   // Actually kick off the agent run - without this the session sits idle.
+  const promptToSend = sessionFileToResume && message
+    ? `current date: ${new Date().toLocaleString("en-US")}\n\nuser sent a follow-up via discord:\n${message.content}`
+    : prompt;
   log("runCycle: sending prompt to agent...");
-  session.prompt(prompt).catch((e) => {
+  session.prompt(promptToSend).catch(async (e) => {
     isRunning = false;
     log(`runCycle: prompt failed: ${e?.message || e}`);
-    if (message) message.reply(`agent failed to start: ${e?.message || e}`);
+    if (message) {
+      const reply = await message.reply(`agent failed to start: ${e?.message || e}`);
+      if (session.sessionFile) {
+        const map = loadDiscordSessionMap();
+        map[reply.id] = { sessionFile: session.sessionFile, timestamp: new Date().toISOString() };
+        saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
+        log(`saved session mapping: reply ${reply.id} -> ${session.sessionFile}`);
+      }
+    }
   });
 }
 
