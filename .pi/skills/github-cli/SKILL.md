@@ -28,8 +28,8 @@ Alternatively, you can set the \`GITHUB_TOKEN\` environment variable.
 
 - **List Pull Requests**: \`gh pr list\`
 - **View a Pull Request**: \`gh pr view <number>\`
-- **Create a Pull Request**: \`gh pr create --title "Title" --body "Body" --assignee @me\`
-  - always pass \`--assignee @me\` so the pr shows up in the owner's assigned list in the github app. if the token lacks scopes for \`gh pr edit --add-assignee\`, use the rest api instead: \`gh api -X POST repos/{owner}/{repo}/issues/<number>/assignees -f assignees[]=<user>\`
+- **Create a Pull Request**: \`gh pr create --title "Title" --body "Body" --assignee johndikeman\`
+  - always assign the pr to **johndikeman** (not @me — the token runs as dudeagent) so it shows up in his assigned list in the github app. if the token lacks scopes for \`gh pr edit --add-assignee\`, use the rest api instead: \`gh api -X POST repos/{owner}/{repo}/issues/<number>/assignees -f assignees[]=johndikeman\`
 - **List Issues**: \`gh issue list\`
 - **Clone a Repository**: \`gh repo clone <owner>/<repo>\`
 
