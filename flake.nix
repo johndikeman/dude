@@ -237,13 +237,12 @@
               home.activation.checkDudeServices = lib.hm.dag.entryAfter [ "reloadSystemd" ] (
                 let
                   systemctl = "/usr/bin/systemctl --user";
-                  servicesToCheck =
-                    [
-                      "dude-agent-watch.service"
-                    ]
-                    ++ lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService) [
-                      "obsidian-sync.service"
-                    ];
+                  servicesToCheck = [
+                    "dude-agent-watch.service"
+                  ]
+                  ++ lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService) [
+                    "obsidian-sync.service"
+                  ];
                   timeoutSecs = 90;
                 in
                 lib.optionalString (servicesToCheck != [ ]) ''
@@ -312,6 +311,7 @@
 
                   Environment = [
                     "DUDE_CONFIG_DIR=${cfg.configDirectory}"
+                    "DUDE_WORKING_DIR=${cfg.workingDirectory}"
                     "OBSIDIAN_DIR=${cfg.obsidianDir}"
                     "PI_SESSION_DIR=${cfg.piSessionDir}"
                     "PI_SKILLS=${self.packages.${pkgs.stdenv.hostPlatform.system}.skills}/skills"

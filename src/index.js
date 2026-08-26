@@ -24,25 +24,25 @@ const client = new Client({
 });
 
 const getPaths = () => {
+  const workingDir = process.env.DUDE_WORKING_DIR;
   const configDir = process.env.DUDE_CONFIG_DIR;
   const piSessionDir = process.env.PI_SESSION_DIR;
   const obsidianDir = process.env.OBSIDIAN_DIR;
   return {
+    workingDir,
     configDir,
     piSessionDir,
     tasksFile: path.join(obsidianDir, "ai-tasks.md"),
-    configFile: path.join(configDir, "config.json"),
     logFile: path.join(configDir, "agent.log"),
     repoBriefFile: path.join(process.cwd(), "REPO_BRIEF.md"),
   };
 };
 
-// Model configuration - loaded from config file
-let MODEL_CODE = null;
-let MODEL_PROVIDER = null;
-let FALLBACK_MODEL_CODE = null;
-let FALLBACK_MODEL_PROVIDER = null;
-let USE_FALLBACK_ON_QUOTA_ERROR = false;
+let MODEL_CODE = "z-ai/glm-5.3-flash";
+let MODEL_PROVIDER = "openrouter";
+let FALLBACK_MODEL_CODE = "deepseek/deepseek-v4-flash-0731";
+let FALLBACK_MODEL_PROVIDER = "openrouter";
+let USE_FALLBACK_ON_QUOTA_ERROR = true;
 
 /** @param {string} msg - the message to log */
 function log(msg) {
@@ -54,78 +54,10 @@ function log(msg) {
   } catch (e) {}
 }
 
-let config = {
-  workDir: process.cwd(),
-  autoNext: false,
-  statusUpdateInterval: 120000, // 2 minutes in ms
-  statusUpdateModel: "gemini-2.0-flash",
-  lastChannelId: null,
-  modelCode: "gemini-3-flash-preview", // default model
-  modelProvider: "google-gemini-cli",
-  fallbackModelCode: null, // optional fallback model for quota errors
-  fallbackModelProvider: null,
-  useFallbackOnQuotaError: false, // flag to enable fallback on quota errors
-};
-
 let isRunning = false;
 let currentRunningTask = null;
 let pausedTaskInfo = null; // Store info about paused tasks for status display
 let lastRunHitQuotaLimit = false;
-
-if (fs.existsSync(getPaths().configFile)) {
-  try {
-    const savedConfig = JSON.parse(
-      fs.readFileSync(getPaths().configFile, "utf8"),
-    );
-    config = { ...config, ...savedConfig };
-  } catch (e) {
-    log(`Error loading config: ${e.message}`);
-  }
-}
-
-// Initialize model settings from config
-function initializeModelSettings() {
-  MODEL_CODE = config.modelCode || "gemini-3-flash-preview";
-  MODEL_PROVIDER = config.modelProvider || "google-gemini-cli";
-  FALLBACK_MODEL_CODE = config.fallbackModelCode || null;
-  FALLBACK_MODEL_PROVIDER = config.fallbackModelProvider || null;
-  USE_FALLBACK_ON_QUOTA_ERROR = config.useFallbackOnQuotaError || false;
-
-  // Determine fallback provider if not explicitly set
-  if (FALLBACK_MODEL_CODE && !FALLBACK_MODEL_PROVIDER) {
-    if (FALLBACK_MODEL_CODE === "qwen3.5:122b") {
-      FALLBACK_MODEL_PROVIDER = "verda";
-    } else {
-      FALLBACK_MODEL_PROVIDER = "google-gemini-cli";
-    }
-  }
-
-  // Determine main provider if not explicitly set
-  if (!MODEL_PROVIDER) {
-    if (MODEL_CODE === "qwen3.5:122b") {
-      MODEL_PROVIDER = "verda";
-    } else {
-      MODEL_PROVIDER = "google-gemini-cli";
-    }
-  }
-
-  log(`Initialized model: ${MODEL_CODE} (${MODEL_PROVIDER})`);
-  if (USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
-    log(
-      `Fallback model enabled: ${FALLBACK_MODEL_CODE} (${FALLBACK_MODEL_PROVIDER})`,
-    );
-  }
-}
-
-function saveConfig() {
-  // Update global model settings from config before saving
-  config.modelCode = MODEL_CODE;
-  config.modelProvider = MODEL_PROVIDER;
-  config.fallbackModelCode = FALLBACK_MODEL_CODE;
-  config.fallbackModelProvider = FALLBACK_MODEL_PROVIDER;
-  config.useFallbackOnQuotaError = USE_FALLBACK_ON_QUOTA_ERROR;
-  fs.writeFileSync(getPaths().configFile, JSON.stringify(config, null, 2));
-}
 
 function getDiscordSessionMapPath() {
   return path.join(getPaths().configDir, "discord-message-sessions.json");
@@ -164,10 +96,7 @@ function cleanupOldDiscordSessionEntries(map, maxAgeDays = 30) {
 
 client.once("ready", async () => {
   log(`Logged in as ${client.user.tag}!`);
-  log(`Current working directory: ${config.workDir}`);
-
-  // Initialize model settings from config
-  initializeModelSettings();
+  log(`Current working directory: ${getPaths().workingDir}`);
 });
 
 client.on("messageCreate", async (message) => {
@@ -185,12 +114,6 @@ async function handleMessage(message) {
   log(
     `discord message from ${message.author.tag} (${message.channelId}, dm=${!message.guild})`,
   );
-
-  // Store channel ID for autoNext status updates
-  if (message.channelId && config.lastChannelId !== message.channelId) {
-    config.lastChannelId = message.channelId;
-    saveConfig();
-  }
 
   // Check if this is a reply to a bot message
   // Fetch the referenced message with a hard timeout - this REST call can
@@ -223,7 +146,9 @@ async function handleMessage(message) {
     const entry = map[referencedMessage.id];
     if (entry?.sessionFile && fs.existsSync(entry.sessionFile)) {
       sessionFileToResume = entry.sessionFile;
-      log(`found session to resume for message ${referencedMessage.id}: ${sessionFileToResume}`);
+      log(
+        `found session to resume for message ${referencedMessage.id}: ${sessionFileToResume}`,
+      );
     } else if (entry?.sessionFile) {
       log(`session file no longer exists for message ${referencedMessage.id}`);
     }
@@ -240,7 +165,9 @@ async function handleMessage(message) {
 async function runCycle(message = null, sessionFileToResume = null) {
   isRunning = true;
   lastRunHitQuotaLimit = false;
-  log(`runCycle: starting (${message ? "discord-triggered" : "scheduled"})${sessionFileToResume ? " [resumed]" : ""}`);
+  log(
+    `runCycle: starting (${message ? "discord-triggered" : "scheduled"})${sessionFileToResume ? " [resumed]" : ""}`,
+  );
 
   // keep a "typing..." indicator visible in the channel for the whole run
   const stopTyping = message ? startTypingLoop(message.channel, { log }) : null;
@@ -248,7 +175,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
   const prompt = `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
 Current date: ${new Date().toLocaleString("en-US")}
 Your goal is to implement the tasks/goals laid out for you in ${getPaths().tasksFile}. 
-your workspace is in (${config.workDir}).
+your workspace is in (${getPaths().workDir}).
 you have access to the gh cli, an obsidian vault, a onepassword service account for credentials, and the vps you're running in.
 the vps is an ubuntu server which uses nix + home-manager to manage itself. the repo johndikeman/dotfiles and branch vps_nix has the config. there's an automatic redeploy action so when you push to this branch, the config will be deployed to the machine.
 you can clone other repositories if needed.
@@ -263,13 +190,13 @@ use lowercase writing and a semi-informal tone.
 
 Context:
 - Task File: ${getPaths().tasksFile}
-- Current working directory: ${config.workDir}
+- Current working directory: ${getPaths().workDir}
 ${message ? "\n you're being invoked as a one-off through discord, user message is:\n" + message.content : ""}
 `;
 
   let lastAssistantMessage = "";
 
-  const cwd = config.workDir;
+  const cwd = getPaths().workDir;
   log("runCycle: creating model runtime...");
   const runtime = await ModelRuntime.create();
   log("runCycle: model runtime created");
@@ -278,7 +205,11 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
   // quota/credit limit and a fallback is configured, switch to it.
   let modelProvider = MODEL_PROVIDER;
   let modelCode = MODEL_CODE;
-  if (lastRunHitQuotaLimit && USE_FALLBACK_ON_QUOTA_ERROR && FALLBACK_MODEL_CODE) {
+  if (
+    lastRunHitQuotaLimit &&
+    USE_FALLBACK_ON_QUOTA_ERROR &&
+    FALLBACK_MODEL_CODE
+  ) {
     log(
       `runCycle: primary model ${MODEL_PROVIDER}/${MODEL_CODE} hit quota limit last run, using fallback ${FALLBACK_MODEL_PROVIDER}/${FALLBACK_MODEL_CODE}`,
     );
@@ -297,7 +228,10 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
   log("runCycle: creating agent session...");
   let sessionManager;
   if (sessionFileToResume) {
-    sessionManager = SessionManager.open(sessionFileToResume, getPaths().piSessionDir);
+    sessionManager = SessionManager.open(
+      sessionFileToResume,
+      getPaths().piSessionDir,
+    );
     log(`runCycle: opened existing session ${sessionFileToResume}`);
   } else {
     sessionManager = SessionManager.create(cwd, getPaths().piSessionDir);
@@ -322,36 +256,49 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
         // Check if this was a quota pause
         log("pi finished successfully.");
         lastAssistantMessage = session.getLastAssistantText();
+        const err = session.modelRuntime.getError();
 
         stopTyping?.();
         if (message) {
           if (lastRunHitQuotaLimit) {
             // auto_retry_end already replied with the failure details.
             log("run ended due to quota limit; failure already surfaced");
-          } else if (lastAssistantMessage == null) {
+          } else if (!lastAssistantMessage && !err) {
             const reply = await message.reply(
-              "Task completed successfully (no output).",
+              "pi exited without output or error?",
             );
             if (session.sessionFile) {
               const map = loadDiscordSessionMap();
-              map[reply.id] = { sessionFile: session.sessionFile, timestamp: new Date().toISOString() };
+              map[reply.id] = {
+                sessionFile: session.sessionFile,
+                timestamp: new Date().toISOString(),
+              };
               saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
             }
           } else {
-            const finalResponse = lastAssistantMessage;
+            const finalResponse =
+              (lastAssistantMessage ? lastAssistantMessage : "") +
+              "\n" +
+              (err ? err : "");
             const cleanedOutput = stripAnsi(finalResponse.trim());
             const truncatedOutput =
               cleanedOutput.length > 1900
                 ? "..." + cleanedOutput.slice(-1900)
                 : cleanedOutput;
             const reply = await message.reply(
-              truncatedOutput || "Task completed successfully (no output).",
+              truncatedOutput ||
+                "pi exited with either some output or some error but we failed to surface it.",
             );
             if (session.sessionFile) {
               const map = loadDiscordSessionMap();
-              map[reply.id] = { sessionFile: session.sessionFile, timestamp: new Date().toISOString() };
+              map[reply.id] = {
+                sessionFile: session.sessionFile,
+                timestamp: new Date().toISOString(),
+              };
               saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
-              log(`saved session mapping: reply ${reply.id} -> ${session.sessionFile}`);
+              log(
+                `saved session mapping: reply ${reply.id} -> ${session.sessionFile}`,
+              );
             }
           }
         }
@@ -364,7 +311,7 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
         log(`pi failed: ${event.finalError}`);
         if (/402|credit|quota|insufficient/i.test(String(event.finalError))) {
           lastRunHitQuotaLimit = true;
-          log("quota/credit limit detected; fallback will be used next run if configured");
+          log("quota/credit limit detected.");
         }
         if (message) {
           const reply = await message.reply(
@@ -372,9 +319,14 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
           );
           if (session.sessionFile) {
             const map = loadDiscordSessionMap();
-            map[reply.id] = { sessionFile: session.sessionFile, timestamp: new Date().toISOString() };
+            map[reply.id] = {
+              sessionFile: session.sessionFile,
+              timestamp: new Date().toISOString(),
+            };
             saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
-            log(`saved session mapping: reply ${reply.id} -> ${session.sessionFile}`);
+            log(
+              `saved session mapping: reply ${reply.id} -> ${session.sessionFile}`,
+            );
           }
         }
         break;
@@ -382,21 +334,29 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
   });
 
   // Actually kick off the agent run - without this the session sits idle.
-  const promptToSend = sessionFileToResume && message
-    ? `current date: ${new Date().toLocaleString("en-US")}\n\nuser sent a follow-up via discord:\n${message.content}`
-    : prompt;
+  const promptToSend =
+    sessionFileToResume && message
+      ? `current date: ${new Date().toLocaleString("en-US")}\n\nuser sent a follow-up via discord:\n${message.content}`
+      : prompt;
   log("runCycle: sending prompt to agent...");
   session.prompt(promptToSend).catch(async (e) => {
     stopTyping?.();
     isRunning = false;
     log(`runCycle: prompt failed: ${e?.message || e}`);
     if (message) {
-      const reply = await message.reply(`agent failed to start: ${e?.message || e}`);
+      const reply = await message.reply(
+        `agent failed to start: ${e?.message || e}`,
+      );
       if (session.sessionFile) {
         const map = loadDiscordSessionMap();
-        map[reply.id] = { sessionFile: session.sessionFile, timestamp: new Date().toISOString() };
+        map[reply.id] = {
+          sessionFile: session.sessionFile,
+          timestamp: new Date().toISOString(),
+        };
         saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
-        log(`saved session mapping: reply ${reply.id} -> ${session.sessionFile}`);
+        log(
+          `saved session mapping: reply ${reply.id} -> ${session.sessionFile}`,
+        );
       }
     }
   });
@@ -408,7 +368,6 @@ const isOneShot =
   process.argv.includes("--run");
 
 if (isOneShot) {
-  initializeModelSettings();
   log("Starting one-off scheduled agent cycle...");
   runCycle();
 } else if (process.env.DISCORD_TOKEN) {
@@ -417,6 +376,5 @@ if (isOneShot) {
   log(
     "No DISCORD_TOKEN provided and --once not specified. Running single cycle...",
   );
-  initializeModelSettings();
   runCycle();
 }
