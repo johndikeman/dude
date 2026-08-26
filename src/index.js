@@ -40,7 +40,7 @@ const getPaths = () => {
 
 let MODEL_CODE = "z-ai/glm-5.3-flash";
 let MODEL_PROVIDER = "openrouter";
-let FALLBACK_MODEL_CODE = "deepseek/deepseek-v4-flash-0731";
+let FALLBACK_MODEL_CODE = "openrouter/free";
 let FALLBACK_MODEL_PROVIDER = "openrouter";
 let USE_FALLBACK_ON_QUOTA_ERROR = true;
 
