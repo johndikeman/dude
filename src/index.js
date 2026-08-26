@@ -103,10 +103,13 @@ client.on("messageCreate", async (message) => {
   try {
     await handleMessage(message);
   } catch (e) {
-    log(`error handling message ${message.id}: ${e?.message || e}`);
+    log(`error handling message ${message.id}: ${e?.stack || e?.message || e}`);
   }
 });
 
+/** this triggers a one-off run of the agent, separate from the periodic cron job
+ * 
+ @param {OmitPartialGroupDMChannel<Message<boolean>>} message - the discord message that triggered the agent run */
 async function handleMessage(message) {
   // Ignore bot messages
   if (message.author.bot) return;
@@ -155,7 +158,7 @@ async function handleMessage(message) {
   }
 
   runCycle(message, sessionFileToResume).catch((e) =>
-    log(`runCycle: failed: ${e?.message || e}`),
+    log(`runCycle: failed: ${e?.stack || e?.message || e}`),
   );
 }
 
@@ -172,10 +175,33 @@ async function runCycle(message = null, sessionFileToResume = null) {
   // keep a "typing..." indicator visible in the channel for the whole run
   const stopTyping = message ? startTypingLoop(message.channel, { log }) : null;
 
+  // Resolve all paths once and validate the critical ones up front so a
+  // missing env var surfaces a clear error instead of an opaque
+  // "Cannot read properties of undefined (reading 'startsWith')" deeper
+  // inside the pi runtime.
+  const paths = getPaths();
+  const cwd = paths.workingDir;
+  if (!cwd) {
+    throw new Error(
+      "DUDE_WORKING_DIR is not set; cannot create agent session without a working directory",
+    );
+  }
+  if (!paths.configDir) {
+    throw new Error(
+      "DUDE_CONFIG_DIR is not set; cannot create agent session without a config directory",
+    );
+  }
+  if (!paths.piSessionDir) {
+    throw new Error(
+      "PI_SESSION_DIR is not set; cannot create agent session without a session directory",
+    );
+  }
+  log(`runCycle: working directory = ${cwd}`);
+
   const prompt = `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
 Current date: ${new Date().toLocaleString("en-US")}
-Your goal is to implement the tasks/goals laid out for you in ${getPaths().tasksFile}. 
-your workspace is in (${getPaths().workDir}).
+Your goal is to implement the tasks/goals laid out for you in ${paths.tasksFile}. 
+your workspace is in (${paths.workingDir}).
 you have access to the gh cli, an obsidian vault, a onepassword service account for credentials, and the vps you're running in.
 the vps is an ubuntu server which uses nix + home-manager to manage itself. the repo johndikeman/dotfiles and branch vps_nix has the config. there's an automatic redeploy action so when you push to this branch, the config will be deployed to the machine.
 you can clone other repositories if needed.
@@ -183,22 +209,25 @@ Create a feature branch to work on, REMEMBER TO ALWAYS FIRST pull in the most re
 when appropriate, write testcases to test new code.
 Then, commit the code to the feature branch and open a PR using gh cli.
 the task files have obsidian links to other files, which contain the full instructions for the task. if feedback is required, leave a note to myself and your future self runs in this file and quit. also log the actions you take and general design in this file as well.
-When the task is complete, mark it as done in the task file (${getPaths().tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
+When the task is complete, mark it as done in the task file (${paths.tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
 
-previous session logs can be found in ${getPaths().piSessionDir} 
+previous session logs can be found in ${paths.piSessionDir} 
 use lowercase writing and a semi-informal tone.
 
 Context:
-- Task File: ${getPaths().tasksFile}
-- Current working directory: ${getPaths().workDir}
+- Task File: ${paths.tasksFile}
+- Current working directory: ${paths.workingDir}
 ${message ? "\n you're being invoked as a one-off through discord, user message is:\n" + message.content : ""}
 `;
 
   let lastAssistantMessage = "";
 
-  const cwd = getPaths().workDir;
   log("runCycle: creating model runtime...");
-  const runtime = await ModelRuntime.create();
+  const runtime = await ModelRuntime.create({
+    allowModelNetwork: true,
+    modelRefreshTimeoutMs: 15_000,
+  });
+
   log("runCycle: model runtime created");
 
   // Use the configured primary model; if the previous run exhausted a
@@ -216,11 +245,18 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
     modelProvider = FALLBACK_MODEL_PROVIDER;
     modelCode = FALLBACK_MODEL_CODE;
   }
+  log(`runCycle: requesting model ${modelProvider}/${modelCode}`);
   const model = runtime.getModel(modelProvider, modelCode);
+  if (!model) {
+    throw new Error(
+      `Model ${modelProvider}/${modelCode} is not configured in pi's model catalog`,
+    );
+  }
+  log(`runCycle: model resolved: ${model.id} (${model.provider})`);
 
   const resourceLoader = new DefaultResourceLoader({
     cwd,
-    agentDir: getPaths().configDir,
+    agentDir: paths.configDir,
     appendSystemPromptOverride: (base) => [...base, prompt],
   });
 
@@ -230,11 +266,12 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
   if (sessionFileToResume) {
     sessionManager = SessionManager.open(
       sessionFileToResume,
-      getPaths().piSessionDir,
+      paths.piSessionDir,
     );
     log(`runCycle: opened existing session ${sessionFileToResume}`);
   } else {
-    sessionManager = SessionManager.create(cwd, getPaths().piSessionDir);
+    sessionManager = SessionManager.create(cwd, paths.piSessionDir);
+    log(`runCycle: created new session in ${paths.piSessionDir}`);
   }
   const { session } = await createAgentSession({
     cwd,
@@ -243,7 +280,9 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
     model,
     thinkingLevel: "low",
   });
-  log("runCycle: agent session created");
+  log(
+    `runCycle: agent session created (sessionFile=${session.sessionFile ?? "<none>"})`,
+  );
 
   // https://github.com/earendil-works/pi/blob/74786a748f5314cc2127ebbcfa2d732e9b8433f5/packages/coding-agent/src/core/agent-session.ts#L143
   session.subscribe(async (event) => {
@@ -342,7 +381,7 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
   session.prompt(promptToSend).catch(async (e) => {
     stopTyping?.();
     isRunning = false;
-    log(`runCycle: prompt failed: ${e?.message || e}`);
+    log(`runCycle: prompt failed: ${e?.stack || e?.message || e}`);
     if (message) {
       const reply = await message.reply(
         `agent failed to start: ${e?.message || e}`,
