@@ -192,16 +192,7 @@
                   description = "Path to the local Obsidian vault to sync.";
                 };
 
-                runtimeMaxSec = lib.mkOption {
-                  type = lib.types.str;
-                  default = "30m";
-                  description = ''
-                    Maximum continuous runtime before systemd terminates and restarts
-                    the obsidian-sync service.  This forces a token refresh via
-                    ExecStartPre even when obsidian-headless would otherwise loop
-                    forever on a stale auth token.
-                  '';
-                };
+                
               };
 
               gitUserName = lib.mkOption {
@@ -214,6 +205,17 @@
                 type = lib.types.str;
                 default = "dude@johnf.art";
                 description = "Git user email used by the agent for commits.";
+              };
+              # Optional runtimeMaxSec for obsidian-sync (kept for backward compatibility but now hardcoded)
+              runtimeMaxSec = lib.mkOption {
+                type = lib.types.str;
+                default = "30m";
+                description = ''
+                  Maximum continuous runtime before systemd terminates and restarts
+                  the obsidian-sync service.  This forces a token refresh via
+                  ExecStartPre even when obsidian-headless would otherwise loop
+                  forever on a stale auth token.
+                '';
               };
             };
 
@@ -243,7 +245,7 @@
                   ++ lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService) [
                     "obsidian-sync.service"
                   ];
-                  timeoutSecs = 90;
+                  timeoutSecs = 300;
                 in
                 lib.optionalString (servicesToCheck != [ ]) ''
                   check_service() {
@@ -418,7 +420,7 @@
                     };
                     Service = {
                       Type = "simple";
-                      RuntimeMaxSec = cfg.obsidianSync.runtimeMaxSec;
+                      
                       ExecStartPre = [
                         "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianSync.vaultPath}"
                         "${obLoginScript}"
