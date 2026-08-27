@@ -23,6 +23,9 @@
             inherit system;
             config.allowUnfree = true;
           };
+          browserEnv = [
+            "FONTCONFIG_FILE=${self.packages.${pkgs.stdenv.hostPlatform.system}.browser-env}/fonts.conf"
+          ];
         in
         {
           packages.default = pkgs.buildNpmPackage.override { nodejs = pkgs.nodejs_24; } {
@@ -70,6 +73,23 @@
             '';
           };
 
+          # Chromium needs a fontconfig config + at least one font, otherwise its
+          # renderer aborts in Skia (SkFontMgr_FontConfigInterface "Not implemented")
+          # on any real page. On non-NixOS hosts there is no /etc/fonts, so we ship
+          # our own fonts.conf and point FONTCONFIG_FILE at it.
+          packages.browser-env = pkgs.runCommand "browser-env" { } ''
+            mkdir -p $out
+            cat > $out/fonts.conf <<EOF
+            <?xml version="1.0"?>
+            <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+            <fontconfig>
+              <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
+              <dir>${pkgs.noto-fonts}/share/fonts</dir>
+              <cachedir>/tmp/fontconfig-cache</cachedir>
+            </fontconfig>
+            EOF
+          '';
+
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
               nodejs_24
@@ -84,6 +104,7 @@
               export PI_SKILLS=${self.packages.${system}.skills}/skills
               export WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium
             '';
+            inherit browserEnv;
           };
         }
       );
@@ -317,6 +338,7 @@
                     "PI_SESSION_DIR=${cfg.piSessionDir}"
                     "PI_SKILLS=${self.packages.${pkgs.stdenv.hostPlatform.system}.skills}/skills"
                     "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
+                    "FONTCONFIG_FILE=${self.packages.${pkgs.stdenv.hostPlatform.system}.browser-env}/fonts.conf"
                     "PATH=${
                       lib.makeBinPath [
                         pkgs.git
@@ -372,6 +394,7 @@
                     "PI_SESSION_DIR=${cfg.piSessionDir}"
                     "PI_SKILLS=${self.packages.${pkgs.stdenv.hostPlatform.system}.skills}/skills"
                     "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
+                    "FONTCONFIG_FILE=${self.packages.${pkgs.stdenv.hostPlatform.system}.browser-env}/fonts.conf"
                     "PATH=${
                       lib.makeBinPath [
                         pkgs.git
