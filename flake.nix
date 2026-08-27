@@ -192,7 +192,6 @@
                   description = "Path to the local Obsidian vault to sync.";
                 };
 
-                
               };
 
               gitUserName = lib.mkOption {
@@ -367,6 +366,7 @@
                   Restart = "always";
                   RestartSec = "10s";
                   Environment = [
+                    "DUDE_WORKING_DIR=${cfg.workingDirectory}"
                     "DUDE_CONFIG_DIR=${cfg.configDirectory}"
                     "OBSIDIAN_DIR=${cfg.obsidianDir}"
                     "PI_SESSION_DIR=${cfg.piSessionDir}"
@@ -420,7 +420,7 @@
                     };
                     Service = {
                       Type = "simple";
-                      
+
                       ExecStartPre = [
                         "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianSync.vaultPath}"
                         "${obLoginScript}"
