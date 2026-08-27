@@ -34,7 +34,6 @@ const getPaths = () => {
     piSessionDir,
     tasksFile: path.join(obsidianDir, "ai-tasks.md"),
     logFile: path.join(configDir, "agent.log"),
-    repoBriefFile: path.join(process.cwd(), "REPO_BRIEF.md"),
   };
 };
 
