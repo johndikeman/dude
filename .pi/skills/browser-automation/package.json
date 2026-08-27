@@ -1,0 +1,10 @@
+{
+  "name": "browser-automation-skill",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Step-by-step headless browser automation skill for pi (multistep JS forms, logins, captcha-style widgets).",
+  "dependencies": {
+    "puppeteer-core": "^25.9.0"
+  }
+}
