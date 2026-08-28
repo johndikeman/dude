@@ -19,6 +19,7 @@
     "discord.js": "^14.26.2",
     "dotenv": "^17.4.1",
     "obsidian-headless": "^0.0.14",
+    "pi-gemini-batch": "github:dudeagent/pi-gemini-batch",
     "strip-ansi": "^7.2.0",
     "undici": "^8.0.2"
   }

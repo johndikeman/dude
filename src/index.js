@@ -5,6 +5,22 @@ import fs from "fs";
 import path from "path";
 import stripAnsi from "strip-ansi";
 import { startTypingLoop } from "./typing.js";
+import { pathToFileURL } from "url";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+
+// resolve bundled pi extension entry points (provider extensions etc.) so the
+// resource loader picks them up in every session
+const ADDITIONAL_EXTENSION_PATHS = ["pi-gemini-batch"]
+  .map((pkg) => {
+    try {
+      return require.resolve(pkg); // absolute path to package main (src/index.js)
+    } catch {
+      return null;
+    }
+  })
+  .filter(Boolean);
 
 import {
   createAgentSession,
@@ -37,10 +53,11 @@ const getPaths = () => {
   };
 };
 
-let MODEL_CODE = "z-ai/glm-5.3-flash";
-let MODEL_PROVIDER = "openrouter";
-let FALLBACK_MODEL_CODE = "openrouter/free";
-let FALLBACK_MODEL_PROVIDER = "openrouter";
+let MODEL_CODE = process.env.DUDE_MODEL || "z-ai/glm-5.3-flash";
+let MODEL_PROVIDER = process.env.DUDE_MODEL_PROVIDER || "openrouter";
+let FALLBACK_MODEL_CODE = process.env.DUDE_FALLBACK_MODEL || "openrouter/free";
+let FALLBACK_MODEL_PROVIDER =
+  process.env.DUDE_FALLBACK_MODEL_PROVIDER || "openrouter";
 let USE_FALLBACK_ON_QUOTA_ERROR = true;
 
 /** @param {string} msg - the message to log */
@@ -257,6 +274,8 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
     cwd,
     agentDir: paths.configDir,
     appendSystemPromptOverride: (base) => [...base, prompt],
+    // load npm-packaged pi extensions (gemini batch provider, etc.)
+    additionalExtensionPaths: ADDITIONAL_EXTENSION_PATHS,
   });
 
   // Use default tools for custom cwd
