@@ -28,15 +28,36 @@
           ];
         in
         {
+          # pi-gemini-batch is packaged separately because a github: dependency
+          # in package-lock.json makes fetchNpmDeps panic ("non-git dependencies
+          # should have associated integrity"). We build it here from a pinned
+          # github revision and splice it into dude-agent's node_modules below.
+          packages.pi-gemini-batch = pkgs.buildNpmPackage.override { nodejs = pkgs.nodejs_24; } {
+            pname = "pi-gemini-batch";
+            version = "0.1.0";
+            src = pkgs.fetchFromGitHub {
+              owner = "dudeagent";
+              repo = "pi-gemini-batch";
+              rev = "b78fe1351a42601c5f316f16c5ed61d3a2ca8a23";
+              hash = "sha256-1ATJgHLX+a5ME2R2nguC9U8YIck7e8xHVyxPlVS0SM0=";
+            };
+            npmDepsHash = "sha256-2NmNOJiquUueqZu1JTODHTGfPcxzguVS5kopDwV7sjM=";
+            npmDepsFetcherVersion = 2;
+            dontNpmBuild = true;
+          };
+
           packages.default = pkgs.buildNpmPackage.override { nodejs = pkgs.nodejs_24; } {
             pname = "dude-agent";
             version = "0.1.0";
             src = ./.;
-            npmDepsHash = "sha256-YhS4frfvNACgr/FaeJdleVNyFyLXPSXQii4awG5fzuE=";
+            npmDepsHash = "sha256-+7/Mc7nGnAZvOJ6TJaL0GACuDPWlno4AQwzAWNIaY8Y=";
             npmDepsFetcherVersion = 2;
             dontNpmBuild = true;
             postInstall = ''
               cp .opvars $out/.opvars
+              mkdir -p $out/lib/node_modules/dude-agent/node_modules
+              ln -sfn ${self.packages.${pkgs.stdenv.hostPlatform.system}.pi-gemini-batch}/lib/node_modules/pi-gemini-batch \
+                $out/lib/node_modules/dude-agent/node_modules/pi-gemini-batch
             '';
           };
 
