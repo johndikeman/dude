@@ -5,6 +5,11 @@ import fs from "fs";
 import path from "path";
 import stripAnsi from "strip-ansi";
 import { startTypingLoop } from "./typing.js";
+import {
+  MAX_EMPTY_RESPONSE_RETRIES,
+  nudgePrompt,
+  shouldNudge,
+} from "./empty-response-retry.js";
 import { pathToFileURL } from "url";
 import { createRequire } from "module";
 
@@ -71,6 +76,7 @@ function log(msg) {
 }
 
 let isRunning = false;
+let emptyResponseRetries = 0; // nudges issued for the current run
 let currentRunningTask = null;
 let pausedTaskInfo = null; // Store info about paused tasks for status display
 let lastRunHitQuotaLimit = false;
@@ -183,6 +189,7 @@ async function handleMessage(message) {
  @param {OmitPartialGroupDMChannel<Message<boolean>>} message - the discord message that triggered the agent run */
 async function runCycle(message = null, sessionFileToResume = null) {
   isRunning = true;
+  emptyResponseRetries = 0;
   lastRunHitQuotaLimit = false;
   log(
     `runCycle: starting (${message ? "discord-triggered" : "scheduled"})${sessionFileToResume ? " [resumed]" : ""}`,
@@ -307,13 +314,37 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
     switch (event.type) {
       case "message_update":
         break;
-      case "agent_settled":
+      case "agent_settled": {
+        lastAssistantMessage = session.getLastAssistantText();
+        const err = session.modelRuntime.getError();
+
+        // the primary model occasionally returns a completely empty
+        // response; pi settles and the run just dies (sometimes mid-task,
+        // right after a tool result). nudge the still-open session to
+        // continue instead of ending the run.
+        if (
+          shouldNudge({
+            lastAssistantText: lastAssistantMessage,
+            error: err,
+            attemptsSoFar: emptyResponseRetries,
+          })
+        ) {
+          emptyResponseRetries += 1;
+          log(
+            `empty model response (settled with no output); nudging session to continue (${emptyResponseRetries}/${MAX_EMPTY_RESPONSE_RETRIES})`,
+          );
+          session.prompt(nudgePrompt(emptyResponseRetries)).catch((e) => {
+            log(`nudge prompt failed: ${e?.stack || e?.message || e}`);
+            isRunning = false;
+            stopTyping?.();
+          });
+          break;
+        }
+
         isRunning = false;
         currentRunningTask = null;
         // Check if this was a quota pause
         log("pi finished successfully.");
-        lastAssistantMessage = session.getLastAssistantText();
-        const err = session.modelRuntime.getError();
 
         stopTyping?.();
         if (message) {
@@ -360,9 +391,11 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
           }
         }
         break;
+      }
       case "auto_retry_end":
         stopTyping?.();
         isRunning = false;
+        emptyResponseRetries = MAX_EMPTY_RESPONSE_RETRIES;
         currentRunningTask = null;
         pausedTaskInfo = null;
         log(`pi failed: ${event.finalError}`);
