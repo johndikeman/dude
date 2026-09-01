@@ -36,6 +36,20 @@ exit 1
 EOF
 chmod +x "$TMP/mock-op-fail"
 
+# mock op that returns an oauth client_secret.json (desktop app)
+cat > "$TMP/mock-op-client" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "read" ]]; then echo '{"installed":{"client_id":"cid-123","client_secret":"sec-456"}}'; fi
+EOF
+chmod +x "$TMP/mock-op-client"
+
+# mock op that returns garbage for the client item
+cat > "$TMP/mock-op-badclient" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "read" ]]; then echo '{"foo":1}'; fi
+EOF
+chmod +x "$TMP/mock-op-badclient"
+
 export GWS_SKIP_DOWNLOAD=1
 
 # 1. missing binary + skip download → error
@@ -74,6 +88,43 @@ GWS_BIN="$TMP/mock-gws" GWS_CREDENTIALS_FILE="$TMP/none.json" GWS_OP="$TMP/mock-
 leftovers=$(compgen -f /tmp | grep -c '' )
 # weak check: just ensure script ran; actual temp cleanup covered by trap — verify no *new* 600-mode cred files linger
 PASS=$((PASS+1))
+
+# mock gws that dumps the auth client env vars (for auth-login tests)
+cat > "$TMP/mock-gws-auth" <<'EOF'
+#!/usr/bin/env bash
+echo "CLIENT_ID=${GOOGLE_WORKSPACE_CLI_CLIENT_ID:-UNSET}"
+echo "CLIENT_SECRET=${GOOGLE_WORKSPACE_CLI_CLIENT_SECRET:-UNSET}"
+echo "CRED_FILE=${GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE:-UNSET}"
+echo "ARGS=$*"
+EOF
+chmod +x "$TMP/mock-gws-auth"
+
+# 8. auth-login pulls client id/secret from 1password as env vars, no credential file
+out="$(GWS_BIN="$TMP/mock-gws-auth" GWS_OP="$TMP/mock-op-client" bash "$GWSX" auth-login -s drive,gmail)"
+assert_contains "auth-login sets client id env" "$out" "CLIENT_ID=cid-123"
+assert_contains "auth-login sets client secret env" "$out" "CLIENT_SECRET=sec-456"
+assert_contains "auth-login passes args to gws auth login" "$out" "ARGS=auth login -s drive,gmail"
+
+# 9. auth-login fails cleanly when the 1p item is missing
+out="$(GWS_BIN="$TMP/mock-gws-auth" GWS_OP="$TMP/mock-op-fail" bash "$GWSX" auth-login 2>&1)"
+rc=$?
+assert_eq "auth-login with missing item exits nonzero" "$rc" "1"
+assert_contains "auth-login missing item error" "$out" "could not read oauth client"
+
+# 10. auth-login fails cleanly when the item isn't a client_secret.json
+out="$(GWS_BIN="$TMP/mock-gws-auth" GWS_OP="$TMP/mock-op-badclient" bash "$GWSX" auth-login 2>&1)"
+rc=$?
+assert_eq "auth-login with bad item exits nonzero" "$rc" "1"
+assert_contains "auth-login bad item error" "$out" "client_secret.json"
+
+# 11. auth-export delegates to gws auth export
+out="$(GWS_BIN="$TMP/mock-gws-auth" bash "$GWSX" auth-export --unmasked)"
+assert_contains "auth-export delegates with args" "$out" "ARGS=auth export --unmasked"
+
+# 12. help mentions the new subcommands
+out="$(GWS_BIN="$TMP/mock-gws" bash "$GWSX" help)"
+assert_contains "help covers auth-login" "$out" "auth-login"
+assert_contains "help covers auth-export" "$out" "auth-export"
 
 echo
 echo "passed: $PASS, failed: $FAIL"
