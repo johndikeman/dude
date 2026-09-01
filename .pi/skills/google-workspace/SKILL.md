@@ -50,31 +50,49 @@ auto-pagination: add `--page-all` to stream results as ndjson. preview requests 
 `--dry-run`. if the binary isn't installed, `gwsx.sh` downloads the latest release from
 github (googleworkspace/cli) into `~/bin/gws`.
 
-## auth (one-time setup, needs john)
+## auth (one-time setup, needs john for the browser step)
 
-the vps is headless, so we use gws's export flow:
+the oauth client lives in 1password (item `gws oauth client secret`, field `credential` —
+john created it 9/1/2026). the wrapper never writes client secrets or credentials to the
+home dir (john's feedback); the exported credentials end up in the 1p item `gws credentials`
+(field `credential`), which dude reads at runtime.
 
-1. john, on any machine with a browser (or ask dude to drive the browser-automation skill
-   through it), set up an oauth client once:
-   - google cloud console → oauth consent screen: external, testing mode, add your
-     account as test user
-   - credentials → oauth client id → type **desktop app** → download json as
-     `client_secret.json`
-   - put `client_secret.json` in 1password vault AI, item `gws oauth client secret`,
-     field `credential` (dude reads it from there)
-2. run `gws auth login` (with `client_secret.json` at `~/.config/gws/client_secret.json`),
-   pick drive + docs + gmail scopes, approve in browser
-3. export headless credentials: `gws auth export --unmasked > credentials.json`
-4. get those credentials onto the vps: either drop them into 1password item
-   `gws credentials` (field `credential`) or hand them over in-session — dude will place
-   them at `~/.config/gws/credentials.json` (mode 600)
+### doing the login (two options)
 
-after that, `gwsx.sh` finds credentials automatically (env var → local file → 1password)
-and gws auto-refreshes tokens. if auth ever dies, redo steps 2–4.
+**a. john runs it locally** (any machine with a browser + 1password cli):
+
+```bash
+export GOOGLE_WORKSPACE_CLI_CLIENT_ID=$(op read 'op://AI/gws oauth client secret/credential' | jq -r .installed.client_id)
+export GOOGLE_WORKSPACE_CLI_CLIENT_SECRET=$(op read 'op://AI/gws oauth client secret/credential' | jq -r .installed.client_secret)
+gws auth login -s drive,docs,gmail      # pick drive + docs + gmail scopes
+gws auth export --unmasked > creds.json  # then paste into 1p item 'gws credentials'
+```
+
+**b. dude runs it on the vps** with an ssh port-forward (gws listens on an auto-negotiated
+localhost port, printed when the command starts):
+
+```bash
+.pi/skills/google-workspace/gwsx.sh auth-login -s drive,docs,gmail
+# john, in another terminal: ssh -L <port>:localhost:<port> ubuntu@<vps>, then open
+# http://localhost:<port> when google redirects, or open the printed consent url on any
+# machine with the tunnel active
+```
+
+### after login (either path)
+
+```bash
+.pi/skills/google-workspace/gwsx.sh auth-export --unmasked   # prints credentials json
+```
+
+paste that json into 1password vault AI, item **`gws credentials`**, field `credential`
+(john has to create the item — dude's service account is read-only). after that,
+`gwsx.sh` picks it up automatically (env var → 1password) and gws auto-refreshes tokens.
+if auth ever dies, redo the login + export.
 
 ## troubleshooting
 
-- `no gws credentials found` — run the setup above
+- `no gws credentials found` — the 1p item `gws credentials` doesn't exist yet; do the
+  login + export above
 - `Access blocked` during consent — john's account isn't a test user on the oauth app
 - scope picker shows too many scopes / fails — unverified apps cap at ~25 scopes; pick
   individual services (`-s drive,docs,gmail`) rather than the `recommended` preset
