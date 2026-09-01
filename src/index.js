@@ -10,6 +10,13 @@ import {
   nudgePrompt,
   shouldNudge,
 } from "./empty-response-retry.js";
+import {
+  LOOP_BREAK_GRACE,
+  LOOP_THRESHOLD,
+  createToolLoopDetector,
+  loopAbortSummary,
+  loopBreakPrompt,
+} from "./loop-detect.js";
 import { pathToFileURL } from "url";
 import { createRequire } from "module";
 
@@ -309,14 +316,87 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
     `runCycle: agent session created (sessionFile=${session.sessionFile ?? "<none>"})`,
   );
 
+  // -----------------------------------------------------------------
+  // tool-loop breaker.
+  // glm-5.3-flash has been observed repeating the exact same tool call
+  // hundreds of times in a row (session 01a059cf, 2026-08-31: 813x
+  // `node test_gd.js 2>&1`, ~1hr wasted). steer a break-the-loop nudge
+  // on first detection; abort the session if it keeps looping.
+  // -----------------------------------------------------------------
+  const loopDetector = createToolLoopDetector();
+  let loopSteerIssued = false; // break-the-loop message injected
+  let loopAborted = false; // session aborted due to persistent loop
+  let loopSignature = null;
+  let loopRepeats = 0;
+
   // https://github.com/earendil-works/pi/blob/74786a748f5314cc2127ebbcfa2d732e9b8433f5/packages/coding-agent/src/core/agent-session.ts#L143
   session.subscribe(async (event) => {
     switch (event.type) {
       case "message_update":
         break;
+      case "tool_execution_start": {
+        if (loopAborted) break;
+        try {
+          const { isLoop, repeats, signature } = loopDetector.observe(
+            event.toolName,
+            event.args,
+          );
+          if (!isLoop) break;
+          loopSignature = signature;
+          loopRepeats = repeats;
+          if (!loopSteerIssued) {
+            loopSteerIssued = true;
+            log(
+              `tool loop detected: ${signature} x${repeats}; steering break-the-loop nudge`,
+            );
+            session.steer(loopBreakPrompt(signature, repeats)).catch((e) => {
+              log(`loop-break steer failed: ${e?.stack || e?.message || e}`);
+            });
+          } else if (repeats >= LOOP_THRESHOLD + LOOP_BREAK_GRACE) {
+            loopAborted = true;
+            // prevent the empty-response nudge from re-prompting the
+            // aborted session (it would likely re-enter the same loop)
+            emptyResponseRetries = MAX_EMPTY_RESPONSE_RETRIES;
+            log(
+              `tool loop persists after nudge (${signature} x${repeats}); aborting session`,
+            );
+            session.abort().catch((e) => {
+              log(`loop-breaker abort failed: ${e?.stack || e?.message || e}`);
+            });
+          }
+        } catch (e) {
+          log(
+            `loop detector error: ${e?.stack || e?.message || e}`,
+          );
+        }
+        break;
+      }
       case "agent_settled": {
         lastAssistantMessage = session.getLastAssistantText();
         const err = session.modelRuntime.getError();
+
+        // loop breaker terminated the run; report and bail out before the
+        // empty-response nudge logic can re-prompt the dead session.
+        if (loopAborted) {
+          isRunning = false;
+          currentRunningTask = null;
+          stopTyping?.();
+          log("pi finished: terminated by loop breaker.");
+          if (message) {
+            const reply = await message.reply(
+              `${loopAbortSummary(loopSignature ?? "(unknown)", loopRepeats || LOOP_THRESHOLD)}\nsession file: ${session.sessionFile ?? "<none>"}`,
+            );
+            if (session.sessionFile) {
+              const map = loadDiscordSessionMap();
+              map[reply.id] = {
+                sessionFile: session.sessionFile,
+                timestamp: new Date().toISOString(),
+              };
+              saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
+            }
+          }
+          break;
+        }
 
         // the primary model occasionally returns a completely empty
         // response; pi settles and the run just dies (sometimes mid-task,
