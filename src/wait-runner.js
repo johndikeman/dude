@@ -26,7 +26,7 @@
 import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
-import { pathToFileURL } from "url";
+import { pathToFileURL, fileURLToPath } from "url";
 
 const DEFAULT_FUNCTIONS_DIR = path.join(
   path.dirname(new URL(import.meta.url).pathname),
@@ -124,7 +124,11 @@ export async function runAllWaitFunctions({ dir, stateFile, invoke = true, spawn
         const args = ["--once"];
         if (purpose) args.push("--purpose", purpose);
         if (outcome.context) args.push("--context", outcome.context);
-        const child = _spawn(process.execPath, [process.argv[1].replace(/wait-runner\.js$/, "index.js"), ...args], {
+        // resolve the agent entry relative to THIS module (robust against
+        // being invoked through the dude-wait bin symlink, where
+        // process.argv[1] doesn't end in wait-runner.js)
+        const agentEntry = fileURLToPath(new URL("./index.js", import.meta.url));
+        const child = _spawn(process.execPath, [agentEntry, ...args], {
           stdio: "ignore",
           detached: false,
         });
