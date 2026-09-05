@@ -629,7 +629,7 @@
                           # (openrouter etc.); purposeCfg.environmentFile is an
                           # extra env file (e.g. pm.env with the 1p service
                           # account token + PM_* vars) layered on top
-                          "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} ${lib.optionalString (purposeCfg.environmentFile != null) "--env-file ${purposeCfg.environmentFile} \\"}-- ${cfg.package}/bin/dude-agent --once --purpose ${purposeName}";
+                          "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} ${lib.optionalString (purposeCfg.environmentFile != null) "--env-file ${purposeCfg.environmentFile} "}-- ${cfg.package}/bin/dude-agent --once --purpose ${purposeName}";
                         Environment = cfg.dudeServiceEnv;
                         EnvironmentFile = [
                           "-${cfg.workingDirectory}/.env"
