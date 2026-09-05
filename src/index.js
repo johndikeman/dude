@@ -18,6 +18,7 @@ import {
   loopBreakPrompt,
 } from "./loop-detect.js";
 import { pathToFileURL } from "url";
+import { loadPurpose, parsePurposeArgs } from "./purpose.js";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
@@ -228,6 +229,25 @@ async function runCycle(message = null, sessionFileToResume = null) {
   }
   log(`runCycle: working directory = ${cwd}`);
 
+  // purpose support: dude-agent --once --purpose <name> [--context "..."]
+  // loads a purpose-specific prompt + skills for special-purpose runs
+  // (e.g. prediction-markets). the discord/watch path never passes --purpose.
+  const { purpose: purposeName, context } = parsePurposeArgs(process.argv);
+  let purpose = null;
+  if (purposeName) {
+    purpose = await loadPurpose(purposeName);
+    // skill paths may be bare names resolved against the packaged skills dir
+    if (process.env.PI_SKILLS) {
+      purpose.skillPaths = purpose.skillPaths.map((p) =>
+        p.startsWith("/") ? p : `${process.env.PI_SKILLS.replace(/\/$/, "")}/${p}`,
+      );
+    }
+    log(
+      `runCycle: loaded purpose "${purposeName}" (${purpose.skillPaths.length} extra skills)${context ? " with wait-runner context" : ""}`,
+    );
+  }
+
+
   const prompt = `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
 Current date: ${new Date().toLocaleString("en-US")}
 Your goal is to implement the tasks/goals laid out for you in ${paths.tasksFile}. 
@@ -247,6 +267,8 @@ use lowercase writing and a semi-informal tone.
 Context:
 - Task File: ${paths.tasksFile}
 - Current working directory: ${paths.workingDir}
+${purpose ? "\n## purpose: " + purpose.name + "\n" + purpose.prompt : ""}
+${context ? "\n## wait-runner context (why you were invoked now)\n" + context : ""}
 ${message ? "\n you're being invoked as a one-off through discord, user message is:\n" + message.content : ""}
 `;
 
@@ -290,6 +312,10 @@ ${message ? "\n you're being invoked as a one-off through discord, user message 
     appendSystemPromptOverride: (base) => [...base, prompt],
     // load npm-packaged pi extensions (gemini batch provider, etc.)
     additionalExtensionPaths: ADDITIONAL_EXTENSION_PATHS,
+    // purpose-specific skills (dirs) pulled into the session
+    ...(purpose && purpose.skillPaths.length
+      ? { additionalSkillPaths: purpose.skillPaths }
+      : {}),
   });
 
   // Use default tools for custom cwd
