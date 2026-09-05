@@ -625,10 +625,11 @@
                         ++ lib.optional (purposeCfg.environmentFile != null)
                           "${pkgs.bash}/bin/bash -c 'test -f ${purposeCfg.environmentFile}'";
                         ExecStart =
-                          (if purposeCfg.environmentFile != null then
-                            "${pkgs._1password-cli}/bin/op run --env-file ${purposeCfg.environmentFile} -- ${cfg.package}/bin/dude-agent --once --purpose ${purposeName}"
-                          else
-                            "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ${cfg.package}/bin/dude-agent --once --purpose ${purposeName}");
+                          # the package's .opvars carries the agent's own 1p refs
+                          # (openrouter etc.); purposeCfg.environmentFile is an
+                          # extra env file (e.g. pm.env with the 1p service
+                          # account token + PM_* vars) layered on top
+                          "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} ${lib.optionalString (purposeCfg.environmentFile != null) "--env-file ${purposeCfg.environmentFile} \\"}-- ${cfg.package}/bin/dude-agent --once --purpose ${purposeName}";
                         Environment = cfg.dudeServiceEnv;
                         EnvironmentFile = [
                           "-${cfg.workingDirectory}/.env"
