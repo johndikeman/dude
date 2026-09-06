@@ -58,6 +58,7 @@
               mkdir -p $out/lib/node_modules/dude-agent/node_modules
               ln -sfn ${self.packages.${pkgs.stdenv.hostPlatform.system}.pi-gemini-batch}/lib/node_modules/pi-gemini-batch \
                 $out/lib/node_modules/dude-agent/node_modules/pi-gemini-batch
+              cp -r wait-functions $out/wait-functions
             '';
           };
 
@@ -166,6 +167,16 @@
             options.services.dude-agent = {
               enable = lib.mkEnableOption "Dude Agent Service";
 
+              # internal: shared environment list for all dude-agent invocations
+              dudeServiceEnv = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                internal = true;
+                default = [ ];
+                description = ''
+                  Shared environment for dude-agent, dude-wait and purpose services.
+                '';
+              };
+
               package = lib.mkOption {
                 type = lib.types.package;
                 default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
@@ -180,6 +191,64 @@
                   Default is every 6 hours ("00/6:00:00").
                   Other valid formats include "*-*-* 00/6:00:00", "daily", "hourly", "*:0/30".
                 '';
+              };
+
+              waitTimer = {
+                enable = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = ''
+                    Enable the dude-wait service + timer. Rather than giving every
+                    agent purpose its own dumb schedule, this single frequently-
+                    running timer checks all wait functions and invokes the
+                    matching agent purpose when one fires.'';
+                };
+                interval = lib.mkOption {
+                  type = lib.types.str;
+                  default = "hourly";
+                  description = ''
+                    Systemd OnCalendar interval for checking the wait functions.
+                    Default is hourly; can run more frequently if needed.'';
+                };
+                functionsDir = lib.mkOption {
+                  type = lib.types.nullOr lib.types.path;
+                  default = null;
+                  description = ''
+                    Directory of wait-function nodejs files (named for the agent
+                    purpose they invoke). Defaults to the package's bundled
+                    wait-functions directory.'';
+                };
+                stateFile = lib.mkOption {
+                  type = lib.types.str;
+                  default = "${cfg.configDirectory}/wait-state.json";
+                  description = "Cache file for wait-function state.";
+                };
+              };
+
+              purposes = lib.mkOption {
+                type = lib.types.attrsOf (lib.types.submodule {
+                  options = {
+                    interval = lib.mkOption {
+                      type = lib.types.str;
+                      description = ''
+                        Systemd OnCalendar interval for running this purpose,
+                        e.g. "*-*-* 00/12:00:00" for every 12 hours.'';
+                    };
+                    environmentFile = lib.mkOption {
+                      type = lib.types.nullOr lib.types.path;
+                      default = null;
+                      description = ''
+                        Extra environment file required for this purpose (e.g. 1p
+                        service account vars). Checked non-fatally.'';
+                    };
+                  };
+                });
+                default = { };
+                description = ''
+                  Special-purpose agent runs, each as dude-agent --once
+                  --purpose <name> on its own schedule. Purpose definitions
+                  (prompt + skills) live in the dude-agent package under
+                  src/purposes/<name>.js.'';
               };
 
               workingDirectory = lib.mkOption {
@@ -260,7 +329,30 @@
               };
             };
 
-            config = lib.mkIf cfg.enable {
+            config = lib.mkIf cfg.enable (lib.mkMerge [
+            {
+              # shared environment for every dude-agent invocation (main, wait
+              # runner, and per-purpose services)
+              services.dude-agent.dudeServiceEnv = [
+                "DUDE_CONFIG_DIR=${cfg.configDirectory}"
+                "DUDE_WORKING_DIR=${cfg.workingDirectory}"
+                "OBSIDIAN_DIR=${cfg.obsidianDir}"
+                "PI_SESSION_DIR=${cfg.piSessionDir}"
+                "PI_SKILLS=${self.packages.${pkgs.stdenv.hostPlatform.system}.skills}/skills"
+                "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
+                "FONTCONFIG_FILE=${self.packages.${pkgs.stdenv.hostPlatform.system}.browser-env}/fonts.conf"
+                "PATH=${
+                  lib.makeBinPath [
+                    pkgs.git
+                    pkgs.gh
+                    pkgs.google-cloud-sdk
+                    pkgs.nodejs_24
+                    pkgs._1password-cli
+                    pkgs.chromium
+                    pkgs.coreutils
+                  ]
+                }:${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin:/usr/bin:/bin"
+              ];
               # Git identity for the agent.  Using mkDefault so consumers can
               # override in their own home.nix if desired.
               programs.git = {
@@ -352,26 +444,7 @@
                     lib.optional (cfg.obsidianSync.enable && !cfg.obsidianSync.separateService)
                       "-${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync --path ${cfg.obsidianSync.vaultPath}";
 
-                  Environment = [
-                    "DUDE_CONFIG_DIR=${cfg.configDirectory}"
-                    "DUDE_WORKING_DIR=${cfg.workingDirectory}"
-                    "OBSIDIAN_DIR=${cfg.obsidianDir}"
-                    "PI_SESSION_DIR=${cfg.piSessionDir}"
-                    "PI_SKILLS=${self.packages.${pkgs.stdenv.hostPlatform.system}.skills}/skills"
-                    "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
-                    "FONTCONFIG_FILE=${self.packages.${pkgs.stdenv.hostPlatform.system}.browser-env}/fonts.conf"
-                    "PATH=${
-                      lib.makeBinPath [
-                        pkgs.git
-                        pkgs.gh
-                        pkgs.google-cloud-sdk
-                        pkgs.nodejs_24
-                        pkgs._1password-cli
-                        pkgs.chromium
-                        pkgs.coreutils
-                      ]
-                    }:${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin:/usr/bin:/bin"
-                  ];
+                  Environment = cfg.dudeServiceEnv;
                   EnvironmentFile = [
                     "-${cfg.workingDirectory}/.env"
                     "-${cfg.configDirectory}/.env"
@@ -408,26 +481,7 @@
                   ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ${cfg.package}/bin/dude-agent";
                   Restart = "always";
                   RestartSec = "10s";
-                  Environment = [
-                    "DUDE_WORKING_DIR=${cfg.workingDirectory}"
-                    "DUDE_CONFIG_DIR=${cfg.configDirectory}"
-                    "OBSIDIAN_DIR=${cfg.obsidianDir}"
-                    "PI_SESSION_DIR=${cfg.piSessionDir}"
-                    "PI_SKILLS=${self.packages.${pkgs.stdenv.hostPlatform.system}.skills}/skills"
-                    "WEB_BROWSE_BROWSER_BIN=${pkgs.chromium}/bin/chromium"
-                    "FONTCONFIG_FILE=${self.packages.${pkgs.stdenv.hostPlatform.system}.browser-env}/fonts.conf"
-                    "PATH=${
-                      lib.makeBinPath [
-                        pkgs.git
-                        pkgs.gh
-                        pkgs.google-cloud-sdk
-                        pkgs.nodejs_24
-                        pkgs._1password-cli
-                        pkgs.chromium
-                        pkgs.coreutils
-                      ]
-                    }:${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin:/usr/bin:/bin"
-                  ];
+                  Environment = cfg.dudeServiceEnv;
                   EnvironmentFile = [
                     "-${cfg.workingDirectory}/.env"
                     "-${cfg.configDirectory}/.env"
@@ -451,6 +505,56 @@
                   WantedBy = [ "timers.target" ];
                 };
               };
+
+              # 3b. dude-wait: event-driven invocation of agent purposes.
+              # one frequently-running timer checks all wait functions and
+              # starts dude-agent --once --purpose <name> when one fires.
+              systemd.user.services.dude-wait =
+                lib.mkIf cfg.waitTimer.enable
+                  {
+                    Unit = {
+                      Description = "Dude Agent Wait Function Checker";
+                      After = [ "network.target" ];
+                      StartLimitBurst = "5";
+                      StartLimitIntervalSec = "120s";
+                    };
+                    Service = {
+                      Type = "oneshot";
+                      WorkingDirectory = cfg.workingDirectory;
+                      ExecStart =
+                        let
+                          args = [
+                            "--functions-dir=${
+                            if cfg.waitTimer.functionsDir != null
+                            then cfg.waitTimer.functionsDir
+                            else "${cfg.package}/wait-functions"
+                          }"
+                            "--state-file=${cfg.waitTimer.stateFile}"
+                          ];
+                        in
+                        "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ${cfg.package}/bin/dude-wait ${lib.concatStringsSep " " args}";
+                      Environment = cfg.dudeServiceEnv;
+                      EnvironmentFile = [
+                        "-${cfg.workingDirectory}/.env"
+                        "-${cfg.configDirectory}/.env"
+                      ];
+                    };
+                  };
+
+              systemd.user.timers.dude-wait =
+                lib.mkIf cfg.waitTimer.enable
+                  {
+                    Unit = {
+                      Description = "Dude Agent Wait Function Checker Timer";
+                    };
+                    Timer = {
+                      OnCalendar = cfg.waitTimer.interval;
+                      Persistent = true;
+                    };
+                    Install = {
+                      WantedBy = [ "timers.target" ];
+                    };
+                  };
 
               # 4. Dedicated continuous Obsidian sync service (when separateService = true)
               systemd.user.services.obsidian-sync =
@@ -491,7 +595,72 @@
                       WantedBy = [ "default.target" ];
                     };
                   };
-            };
+            }
+
+            # 3c. per-purpose oneshot services + timers (separate merge member
+            # so dynamic unit names merge with the static defs above). each
+            # purpose is defined in the package under src/purposes/<name>.js
+            # and runs dude-agent --once --purpose <name> on its own schedule.
+            (lib.mkIf (cfg.purposes != { }) {
+            systemd.user.services =
+                (lib.mapAttrs'
+                  (purposeName: purposeCfg: {
+                    name = "dude-agent-${purposeName}";
+                    value = {
+                      Unit = {
+                        Description = "Dude Agent (purpose: ${purposeName})";
+                        After = [ "network.target" ];
+                        StartLimitBurst = "5";
+                        StartLimitIntervalSec = "120s";
+                      };
+                      Service = {
+                        Type = "oneshot";
+                        WorkingDirectory = cfg.workingDirectory;
+                        ExecStartPre = [
+                          "${pkgs.coreutils}/bin/mkdir -p ${cfg.configDirectory}"
+                          "${pkgs.coreutils}/bin/mkdir -p ${cfg.workingDirectory}"
+                          "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianDir}"
+                          "${pkgs.coreutils}/bin/mkdir -p ${cfg.piSessionDir}"
+                        ]
+                        ++ lib.optional (purposeCfg.environmentFile != null)
+                          "${pkgs.bash}/bin/bash -c 'test -f ${purposeCfg.environmentFile}'";
+                        ExecStart =
+                          # the package's .opvars carries the agent's own 1p refs
+                          # (openrouter etc.); purposeCfg.environmentFile is an
+                          # extra env file (e.g. pm.env with the 1p service
+                          # account token + PM_* vars) layered on top
+                          "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} ${lib.optionalString (purposeCfg.environmentFile != null) "--env-file ${purposeCfg.environmentFile} "}-- ${cfg.package}/bin/dude-agent --once --purpose ${purposeName}";
+                        Environment = cfg.dudeServiceEnv;
+                        EnvironmentFile = [
+                          "-${cfg.workingDirectory}/.env"
+                          "-${cfg.configDirectory}/.env"
+                        ];
+                      };
+                    };
+                  })
+                cfg.purposes);
+
+              systemd.user.timers =
+                (lib.mapAttrs'
+                  (purposeName: purposeCfg: {
+                    name = "dude-agent-${purposeName}";
+                    value = {
+                      Unit = {
+                        Description = "Dude Agent (purpose: ${purposeName}) Timer";
+                      };
+                      Timer = {
+                        OnCalendar = purposeCfg.interval;
+                        Persistent = true;
+                      };
+                      Install = {
+                        WantedBy = [ "timers.target" ];
+                      };
+                    };
+                  })
+                cfg.purposes);
+            })
+
+            ]);
           };
 
         default = homeManagerModules.dude-agent;

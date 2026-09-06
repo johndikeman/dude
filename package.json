@@ -5,7 +5,8 @@
   "type": "module",
   "main": "src/index.js",
   "bin": {
-    "dude-agent": "src/index.js"
+    "dude-agent": "src/index.js",
+    "dude-wait": "src/wait-runner.js"
   },
   "scripts": {
     "start": "node src/index.js"
