@@ -424,8 +424,14 @@
                   StartLimitBurst = "5";
                   StartLimitIntervalSec = "120s";
                 };
+                # Type=simple, not oneshot: oneshot makes `systemctl start`
+                # block until the whole agent cycle finishes, and home-manager
+                # restarts changed units synchronously during activation —
+                # a long-running agent run then stalls the deploy-rs
+                # confirmation wait and the deploy rolls back (seen live
+                # 2026-09-06). simple returns from start immediately.
                 Service = {
-                  Type = "oneshot";
+                  Type = "simple";
                   WorkingDirectory = cfg.workingDirectory;
                   ExecStartPre = [
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.configDirectory}"
@@ -518,8 +524,11 @@
                       StartLimitBurst = "5";
                       StartLimitIntervalSec = "120s";
                     };
+                    # simple, not oneshot — see dude-agent.service above.
+                    # (the wait runner may itself invoke an agent cycle
+                    # synchronously when a wait function fires)
                     Service = {
-                      Type = "oneshot";
+                      Type = "simple";
                       WorkingDirectory = cfg.workingDirectory;
                       ExecStart =
                         let
@@ -613,8 +622,11 @@
                         StartLimitBurst = "5";
                         StartLimitIntervalSec = "120s";
                       };
+                      # simple, not oneshot — see dude-agent.service above
+                      # (an LLM cycle takes minutes; a blocking start here
+                      # stalls HM activation during deploys)
                       Service = {
-                        Type = "oneshot";
+                        Type = "simple";
                         WorkingDirectory = cfg.workingDirectory;
                         ExecStartPre = [
                           "${pkgs.coreutils}/bin/mkdir -p ${cfg.configDirectory}"
