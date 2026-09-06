@@ -11,6 +11,7 @@ import {
   loadWaitFunction,
   runWaitFunction,
   runAllWaitFunctions,
+  refreshWaitFunctionState,
   defaultStateFile,
 } from "./src/wait-runner.js";
 
@@ -114,6 +115,127 @@ test("runAllWaitFunctions invokes dude-agent with purpose + context for fired fu
   const quiet = results.find((r) => r.name === "quiet");
   assert.equal(quiet.fired, false);
   assert.equal(quiet.invoked, undefined);
+});
+
+// fires once (when watched content changes), then reflects the new content
+// hash as state — like the shipped ai-tasks.js wait function. simulates the
+// self-fire loop: agent runs, agent edits the watched file, next tick must
+// NOT fire again.
+const HASH_FN = `
+import crypto from "crypto";
+import fs from "fs";
+const WATCH = process.env.WATCH_FILE;
+export async function check({ state }) {
+  const hash = crypto.createHash("sha256").update(fs.readFileSync(WATCH)).digest("hex");
+  if (state === null) return { fire: false, context: null, state: hash };
+  if (state === hash) return { fire: false, context: null, state: hash };
+  return { fire: true, context: "file changed", state: hash };
+}
+`;
+
+test("refreshWaitFunctionState persists new state without firing the agent", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  const watchFile = path.join(tmpDir(), "watched.md");
+  fs.writeFileSync(path.join(dir, "watch.js"), HASH_FN);
+  fs.writeFileSync(watchFile, "v1\n");
+  process.env.WATCH_FILE = watchFile;
+  try {
+    // baseline
+    await runWaitFunction("watch", { dir, stateFile });
+    // file changes -> fires
+    fs.writeFileSync(watchFile, "v2\n");
+    let r = await runWaitFunction("watch", { dir, stateFile });
+    assert.equal(r.fired, true);
+    // agent "edits" the file again before the next tick
+    fs.writeFileSync(watchFile, "v2 + agent log\n");
+    const ref = await refreshWaitFunctionState("watch", { dir, stateFile });
+    assert.equal(ref.fired, true); // check() wants to fire; runner must IGNORE it
+    // next tick: no fire, baseline matches
+    r = await runWaitFunction("watch", { dir, stateFile });
+    assert.equal(r.fired, false);
+  } finally {
+    delete process.env.WATCH_FILE;
+  }
+});
+
+test("runAllWaitFunctions re-baselines after a clean agent run (no self-fire loop)", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  const watchFile = path.join(tmpDir(), "watched.md");
+  fs.writeFileSync(path.join(dir, "watch.js"), HASH_FN);
+  fs.writeFileSync(watchFile, "v1\n");
+  process.env.WATCH_FILE = watchFile;
+  try {
+    const fakeSpawn = (...callArgs) => {
+      // simulate the agent run: after being invoked it edits the watched file
+      const [, args] = callArgs;
+      const i = args.indexOf("--context");
+      if (i !== -1) fs.writeFileSync(watchFile, fs.readFileSync(watchFile, "utf8") + "agent wrote this\n");
+      return { on: (ev, cb) => { if (ev === "exit") setImmediate(() => cb(0)); } };
+    };
+    const origArgv = process.argv;
+    process.argv = ["/usr/bin/node", "/path/to/index.js"];
+    let results;
+    try {
+      // tick 1: baseline, no fire
+      results = await runAllWaitFunctions({ dir, stateFile, invoke: true, spawnFn: fakeSpawn });
+      assert.equal(results[0].fired, false);
+      // file changes -> tick 2 fires; agent edits the file during its run
+      fs.writeFileSync(watchFile, "v2\n");
+      results = await runAllWaitFunctions({ dir, stateFile, invoke: true, spawnFn: fakeSpawn });
+    } finally {
+      process.argv = origArgv;
+    }
+    assert.equal(results[0].fired, true);
+    assert.equal(results[0].invoked.exitCode, 0);
+    assert.equal(results[0].rebaselined, true);
+    // tick 3: agent's own edit must not re-fire
+    results = await runAllWaitFunctions({ dir, stateFile, invoke: true, spawnFn: fakeSpawn });
+    assert.equal(results[0].fired, false);
+    assert.equal(results[0].invoked, undefined);
+  } finally {
+    delete process.env.WATCH_FILE;
+  }
+});
+
+test("runAllWaitFunctions skips re-baseline when agent exits non-zero", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  const watchFile = path.join(tmpDir(), "watched.md");
+  fs.writeFileSync(path.join(dir, "watch.js"), HASH_FN);
+  fs.writeFileSync(watchFile, "v1\n");
+  process.env.WATCH_FILE = watchFile;
+  try {
+    const fakeSpawn = () => ({ on: (ev, cb) => { if (ev === "exit") setImmediate(() => cb(1)); } });
+    const origArgv = process.argv;
+    process.argv = ["/usr/bin/node", "/path/to/index.js"];
+    let results;
+    try {
+      await runAllWaitFunctions({ dir, stateFile, invoke: true, spawnFn: fakeSpawn }); // baseline
+      fs.writeFileSync(watchFile, "v2\n");
+      results = await runAllWaitFunctions({ dir, stateFile, invoke: true, spawnFn: fakeSpawn });
+    } finally {
+      process.argv = origArgv;
+    }
+    assert.equal(results[0].fired, true);
+    assert.equal(results[0].rebaselined, undefined);
+    // state still holds the fire-time hash -> next tick retries
+    const st = JSON.parse(fs.readFileSync(stateFile));
+    const cur = (await import("crypto")).createHash("sha256").update(fs.readFileSync(watchFile)).digest("hex");
+    assert.equal(st.watch, cur);
+  } finally {
+    delete process.env.WATCH_FILE;
+  }
+});
+
+test("refreshWaitFunctionState throws on bad return / check errors", async () => {
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, "null.js"), "export async function check() { return null; }");
+  await assert.rejects(
+    () => refreshWaitFunctionState("null", { dir, stateFile: path.join(tmpDir(), "s.json") }),
+    /returned null/,
+  );
 });
 
 test("runAllWaitFunctions collects errors instead of crashing", async () => {
