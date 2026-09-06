@@ -10,9 +10,15 @@ files and follow these instructions rather than writing new js.
 ## inputs you should read each cycle
 
 - latest `reports/prediction-markets/*.md` in the obsidian vault
-- `state/strategies.json` in the dude-prediction-markets checkout
-  (~/dude-workspace/dude-prediction-markets) — active strategies + snapshots
-- `state/portfolio-history.json` — wallet value over time
+- the **live** state file the runner actually uses:
+  `$PM_STATE_DIR/strategies.json` (default on the vps:
+  `~/.local/state/dude-prediction-markets/strategies.json`). the runner
+  service sets `PM_STATE_DIR` via systemd, so edits made to
+  `~/dude-workspace/dude-prediction-markets/state/strategies.json` (the repo
+  checkout) are **not** seen by the runner — that copy is only a seed/backup.
+  always read and edit the live path, or resolve it from `PM_STATE_DIR` if
+  set in your environment.
+- `$PM_STATE_DIR/portfolio-history.json` — wallet value over time
 - news/market data referenced in the report
 
 ## standing orders
@@ -21,7 +27,8 @@ files and follow these instructions rather than writing new js.
    probabilities on tracked markets. note discrepancies between implied
    market prices and your own estimates.
 2. **create**: if a strategy's query is going stale (low signal), propose a
-   new query or retire it by editing `state/strategies.json` directly.
+   new query or retire it by editing the live `strategies.json` directly
+   (see the state-file path note above).
    keep 3-8 strategies active; quality over quantity.
 3. **backtest**: before backing any strategy with real money, it must have
    at least 20 recorded cycles of paper signals. compare its implied calls
