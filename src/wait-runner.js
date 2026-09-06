@@ -101,8 +101,41 @@ export async function runWaitFunction(name, { dir, stateFile } = {}) {
 }
 
 /**
+ * re-run a wait function's check() and persist the returned state WITHOUT
+ * invoking the agent. used after a fired agent run completes: the agent
+ * typically edits whatever the wait function watches (e.g. appends its log
+ * to ai-tasks.md), and without this refresh the next tick sees that
+ * self-written change as "new" and fires again — an idle self-fire loop.
+ *
+ * a refresh failure is non-fatal (logged, original state kept).
+ */
+export async function refreshWaitFunctionState(name, { dir, stateFile } = {}) {
+  const statePath = stateFile || defaultStateFile();
+  const state = loadState(statePath);
+  const { check } = await loadWaitFunction(name, dir);
+  let result;
+  try {
+    result = await check({ state: state[name] ?? null });
+  } catch (err) {
+    throw new Error(`wait function "${name}" refresh check() failed: ${err.message}`);
+  }
+  if (result === null || typeof result !== "object") {
+    throw new Error(`wait function "${name}" returned ${result}; expected { fire, context, state }`);
+  }
+  if (result.state !== undefined) {
+    state[name] = result.state;
+    saveState(statePath, state);
+  }
+  return { fired: !!result.fire, context: result.context || null };
+}
+
+/**
  * run all wait functions; invoke `dude-agent --once --purpose <name>
- * --context <ctx>` for every one that fires. returns summary array.
+ * --context <ctx>` for every one that fires. after a fired agent run
+ * EXITS CLEANLY, re-baselines that function's state (see
+ * refreshWaitFunctionState) so the agent's own writes to the watched
+ * thing don't re-trigger it. on non-zero exit the state is left alone so
+ * the next tick retries. returns summary array.
  */
 export async function runAllWaitFunctions({ dir, stateFile, invoke = true, spawnFn } = {}) {
   const names = listWaitFunctions(dir);
@@ -135,6 +168,14 @@ export async function runAllWaitFunctions({ dir, stateFile, invoke = true, spawn
         child.on("exit", (code) => resolve({ exitCode: code }));
         child.on("error", (e) => resolve({ error: e.message }));
       });
+      if (entry.invoked && entry.invoked.exitCode === 0) {
+        try {
+          await refreshWaitFunctionState(name, { dir, stateFile });
+          entry.rebaselined = true;
+        } catch (err) {
+          console.error(`[wait] ${err.message}`);
+        }
+      }
     }
     results.push(entry);
   }
