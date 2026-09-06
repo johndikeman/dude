@@ -19,6 +19,7 @@ import {
 } from "./loop-detect.js";
 import { pathToFileURL } from "url";
 import { loadPurpose, parsePurposeArgs } from "./purpose.js";
+import { buildAgentPrompt } from "./agent-prompt.js";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
@@ -248,29 +249,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
   }
 
 
-  const prompt = `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
-Current date: ${new Date().toLocaleString("en-US")}
-Your goal is to implement the tasks/goals laid out for you in ${paths.tasksFile}. 
-your workspace is in (${paths.workingDir}).
-you have access to the gh cli, an obsidian vault, a onepassword service account for credentials, and the vps you're running in.
-the vps is an ubuntu server which uses nix + home-manager to manage itself. the repo johndikeman/dotfiles and branch vps_nix has the config. there's an automatic redeploy action so when you push to this branch, the config will be deployed to the machine.
-you can clone other repositories if needed.
-Create a feature branch to work on, REMEMBER TO ALWAYS FIRST pull in the most recent 'main' branch and use it as the base of your feature branch in case another user has made changes, to avoid a merge conflict.
-when appropriate, write testcases to test new code.
-Then, commit the code to the feature branch and open a PR using gh cli.
-the task files have obsidian links to other files, which contain the full instructions for the task. if feedback is required, leave a note to myself and your future self runs in this file and quit. also log the actions you take and general design in this file as well.
-When the task is complete, mark it as done in the task file (${paths.tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
-
-previous session logs can be found in ${paths.piSessionDir} 
-use lowercase writing and a semi-informal tone.
-
-Context:
-- Task File: ${paths.tasksFile}
-- Current working directory: ${paths.workingDir}
-${purpose ? "\n## purpose: " + purpose.name + "\n" + purpose.prompt : ""}
-${context ? "\n## wait-runner context (why you were invoked now)\n" + context : ""}
-${message ? "\n you're being invoked as a one-off through discord, user message is:\n" + message.content : ""}
-`;
+  const prompt = buildAgentPrompt({ paths, purpose, context, message });
 
   let lastAssistantMessage = "";
 

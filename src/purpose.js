@@ -7,6 +7,10 @@
  *     prompt: string,          // purpose-specific system prompt, appended
  *                              // to the base dude prompt
  *     skillPaths?: string[],   // extra skill dirs pulled into the session
+ *     trimBasePrompt?: boolean // use the trimmed base prompt instead of the
+ *                              // full ai-tasks-processing one (recommended:
+ *                              // purpose runs shouldn't do task triage or
+ *                              // log to the task file)
  *   }
  *
  * The agent CLI is invoked as: dude-agent --once --purpose <name>
@@ -31,7 +35,7 @@ export function listPurposes(dir = PURPOSES_DIR) {
 
 /**
  * load a purpose config by name.
- * @returns {Promise<{name:string, description:string, prompt:string, skillPaths:string[]}|null>}
+ * @returns {Promise<{name:string, description:string, prompt:string, skillPaths:string[], trimBasePrompt:boolean}|null>}
  *          null for the default (no --purpose flag) invocation
  */
 export async function loadPurpose(name, dir = PURPOSES_DIR) {
@@ -52,6 +56,7 @@ export async function loadPurpose(name, dir = PURPOSES_DIR) {
     description: cfg.description || "",
     prompt: cfg.prompt,
     skillPaths: Array.isArray(cfg.skillPaths) ? cfg.skillPaths : [],
+    trimBasePrompt: cfg.trimBasePrompt === true,
   };
 }
 

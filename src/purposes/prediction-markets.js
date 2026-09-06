@@ -19,4 +19,9 @@ files (state/strategies.json) directly rather than writing new js.
 first step of every cycle: read the prediction-markets skill (SKILL.md)
 fully before acting.`,
   skillPaths: ["prediction-markets"],
+  // skip the full ai-tasks base prompt: purpose runs shouldn't do task
+  // triage or append log entries to the task file (it re-triggers the
+  // wait runner). escalation to the main agent still works via a short
+  // note in the task file if ever needed.
+  trimBasePrompt: true,
 };
