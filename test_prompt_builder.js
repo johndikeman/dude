@@ -7,6 +7,8 @@ import { buildAgentPrompt } from "./src/agent-prompt.js";
 
 const PATHS = {
   tasksFile: "/vault/ai-tasks.md",
+  tasksDir: "/vault/tasks",
+  agentLogFile: "/vault/agent-log.md",
   workingDir: "/home/dude-workspace",
   piSessionDir: "/home/.config/dude/sessions",
 };
@@ -18,11 +20,27 @@ const fullFor = (opts = {}) =>
 test("full prompt contains task-processing instructions and no purpose section by default", () => {
   const p = fullFor();
   assert.ok(p.includes(`implement the tasks/goals laid out for you in ${PATHS.tasksFile}`));
-  assert.ok(p.includes(`mark it as done in the task file (${PATHS.tasksFile})`));
+  assert.ok(p.includes(`mark it as done in the task index (${PATHS.tasksFile})`));
   assert.ok(p.includes(`previous session logs can be found in ${PATHS.piSessionDir}`));
   assert.ok(p.includes("Current working directory: /home/dude-workspace"));
   assert.ok(!p.includes("## purpose:"));
   assert.ok(p.includes(NOW.toLocaleString("en-US")));
+});
+
+test("full prompt encodes the task-index/task-doc/ops-log split", () => {
+  const p = fullFor();
+  // index stays tiny, no logs/history in it
+  assert.ok(p.includes("must stay tiny"));
+  assert.ok(p.includes("never append logs, history or background to it"));
+  // task docs carry instructions, design log and feedback
+  assert.ok(p.includes("leave a note to myself and your future self runs in the task doc"));
+  assert.ok(p.includes("log the actions you take and general design there as well"));
+  // non-task ops logging has a home outside the task file
+  assert.ok(p.includes(`non-task ops logging). this is not a style preference`));
+  // paths block exposes all three locations
+  assert.ok(p.includes(`- Task index: ${PATHS.tasksFile}`));
+  assert.ok(p.includes(`- Task docs dir: ${PATHS.tasksDir}`));
+  assert.ok(p.includes(`- Ops log (capped): ${PATHS.agentLogFile}`));
 });
 
 test("purpose without trimBasePrompt keeps the full prompt and appends the purpose block", () => {

@@ -2,7 +2,7 @@
  * Agent prompt builder.
  *
  * The full prompt (used for scheduled / discord / wait-fired main-agent
- * runs) carries the whole ai-tasks.md processing workflow. Purpose runs
+ * runs) carries the whole task-processing workflow. Purpose runs
  * don't need that: they historically inherited it and wasted the first
  * minutes of every cycle on task triage, deploy verification and logging
  * to the task file (which even re-triggered the wait runner).
@@ -26,14 +26,17 @@ you can clone other repositories if needed.
 Create a feature branch to work on, REMEMBER TO ALWAYS FIRST pull in the most recent 'main' branch and use it as the base of your feature branch in case another user has made changes, to avoid a merge conflict.
 when appropriate, write testcases to test new code.
 Then, commit the code to the feature branch and open a PR using gh cli.
-the task files have obsidian links to other files, which contain the full instructions for the task. if feedback is required, leave a note to myself and your future self runs in this file and quit. also log the actions you take and general design in this file as well.
-When the task is complete, mark it as done in the task file (${paths.tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
+the task file is a small index of checklist lines, each linking to a task doc. the task docs contain the full instructions and history; if a task has no doc and needs one, create it. if feedback is required, leave a note to myself and your future self runs in the task doc and quit. also log the actions you take and general design there as well.
+the task index file must stay tiny (a few kb at most): checklist lines plus pointers to open questions only — never append logs, history or background to it. all of that goes in the task doc (or ${paths.agentLogFile} for non-task ops logging). this is not a style preference: every byte in the task file is re-read into context on every run, forever.
+When the task is complete, mark it as done in the task index (${paths.tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
 
 previous session logs can be found in ${paths.piSessionDir} 
 use lowercase writing and a semi-informal tone.
 
 Context:
-- Task File: ${paths.tasksFile}
+- Task index: ${paths.tasksFile}
+- Task docs dir: ${paths.tasksDir}
+- Ops log (capped): ${paths.agentLogFile}
 - Current working directory: ${paths.workingDir}
 ${purpose ? "\n## purpose: " + purpose.name + "\n" + purpose.prompt : ""}
 ${context ? "\n## wait-runner context (why you were invoked now)\n" + context : ""}
