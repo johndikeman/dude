@@ -19,6 +19,7 @@ import {
 } from "./loop-detect.js";
 import { pathToFileURL } from "url";
 import { loadPurpose, parsePurposeArgs } from "./purpose.js";
+import { acquireLock, acquireLockOrExit, releaseLock } from "./agent-lock.js";
 import { buildAgentPrompt } from "./agent-prompt.js";
 import { createRequire } from "module";
 
@@ -202,6 +203,19 @@ async function runCycle(message = null, sessionFileToResume = null) {
   isRunning = true;
   emptyResponseRetries = 0;
   lastRunHitQuotaLimit = false;
+  // cross-process guard: only one agent run at a time (a scheduled timer
+  // run must not overlap a wait-fired or discord-triggered run — they'd
+  // step on each other's task-file edits and sessions). --once invocations
+  // exit 75 so upstream runners treat it as "retry later", not "failed";
+  // the long-running discord service just skips the message-triggered run.
+  const isOneShotRun = process.argv.includes("--once") || process.argv.includes("--cron") || process.argv.includes("--run");
+  if (isOneShotRun) {
+    acquireLockOrExit({ log });
+  } else if (!acquireLock({ log })) {
+    log("runCycle: another agent run is in progress; skipping this trigger.");
+    isRunning = false;
+    return;
+  }
   log(
     `runCycle: starting (${message ? "discord-triggered" : "scheduled"})${sessionFileToResume ? " [resumed]" : ""}`,
   );
@@ -386,6 +400,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
         // empty-response nudge logic can re-prompt the dead session.
         if (loopAborted) {
           isRunning = false;
+          releaseLock();
           currentRunningTask = null;
           stopTyping?.();
           log("pi finished: terminated by loop breaker.");
@@ -423,12 +438,14 @@ async function runCycle(message = null, sessionFileToResume = null) {
           session.prompt(nudgePrompt(emptyResponseRetries)).catch((e) => {
             log(`nudge prompt failed: ${e?.stack || e?.message || e}`);
             isRunning = false;
+            releaseLock();
             stopTyping?.();
           });
           break;
         }
 
         isRunning = false;
+        releaseLock();
         currentRunningTask = null;
         // Check if this was a quota pause
         log("pi finished successfully.");
@@ -482,6 +499,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
       case "auto_retry_end":
         stopTyping?.();
         isRunning = false;
+        releaseLock();
         emptyResponseRetries = MAX_EMPTY_RESPONSE_RETRIES;
         currentRunningTask = null;
         pausedTaskInfo = null;
@@ -519,6 +537,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
   session.prompt(promptToSend).catch(async (e) => {
     stopTyping?.();
     isRunning = false;
+    releaseLock();
     log(`runCycle: prompt failed: ${e?.stack || e?.message || e}`);
     if (message) {
       const reply = await message.reply(

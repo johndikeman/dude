@@ -256,3 +256,131 @@ test("defaultStateFile falls back under config dir", () => {
   if (orig) process.env.DUDE_WAIT_STATE_FILE = orig;
   else delete process.env.DUDE_WAIT_STATE_FILE;
 });
+
+// ---- new behavior: lockfile, one-shot, expanded context, user dir ----
+
+import {
+  acquireLock,
+  releaseLock,
+  normalizeContext,
+  consumeOneShot,
+  listFunctionDirs,
+} from "./src/wait-runner.js";
+
+test("acquireLock takes the lock, blocks a second holder, releases cleanly", () => {
+  const dir = tmpDir();
+  const lockFile = path.join(dir, "wait-lock.json");
+  assert.ok(acquireLock(lockFile));
+  // second acquire with a live pid + fresh lock -> null (skip tick)
+  assert.equal(acquireLock(lockFile), null);
+  releaseLock(lockFile);
+  assert.equal(fs.existsSync(lockFile), false);
+  // after release, a new lock can be taken
+  assert.ok(acquireLock(lockFile));
+  releaseLock(lockFile);
+});
+
+test("acquireLock takes over a stale (dead-pid) lock", () => {
+  const dir = tmpDir();
+  const lockFile = path.join(dir, "wait-lock.json");
+  // find a pid that doesn't exist (well above any real pid on this box)
+  const dead = process.pid + 100000;
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: dead, startedAt: Date.now() }));
+  const lock = acquireLock(lockFile, { staleMs: 60000 });
+  assert.ok(lock);
+  assert.equal(lock.pid, process.pid);
+  releaseLock(lockFile);
+});
+
+test("acquireLock takes over a lock older than staleMs even if pid is alive", () => {
+  const dir = tmpDir();
+  const lockFile = path.join(dir, "wait-lock.json");
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: Date.now() - 3 * 60 * 60 * 1000 }));
+  const lock = acquireLock(lockFile, { staleMs: 2 * 60 * 60 * 1000 });
+  assert.ok(lock);
+  releaseLock(lockFile);
+});
+
+test("normalizeContext handles string, object, array, null", () => {
+  assert.equal(normalizeContext("plain"), "plain");
+  assert.deepEqual(
+    normalizeContext({ summary: "hi", pr: 12, skip: null, empty: "" }).split("\n"),
+    ["summary: hi", "pr: 12"],
+  );
+  assert.equal(normalizeContext(["a", "b"]), "a\nb");
+  assert.equal(normalizeContext(null), null);
+  assert.equal(normalizeContext(undefined), null);
+  assert.equal(normalizeContext(42), "42");
+});
+
+test("runWaitFunction normalizes object context to text", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  fs.writeFileSync(path.join(dir, "obj.js"), `export async function check() {
+  return { fire: true, context: { summary: "merged", pr: 9 } };
+}`);
+  const r = await runWaitFunction("obj", { dir, stateFile });
+  assert.equal(r.fired, true);
+  assert.equal(r.context, "summary: merged\npr: 9");
+});
+
+test("oneshot function is deleted + state cleared after a clean fire", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  fs.writeFileSync(path.join(dir, "once.js"), `export const oneshot = true;
+export async function check() { return { fire: true, context: "one time" }; }`);
+  const spawned = [];
+  const fakeSpawn = () => ({ on: (ev, cb) => { if (ev === "exit") setImmediate(() => cb(0)); } });
+  const origArgv = process.argv;
+  process.argv = ["/usr/bin/node", "/path/to/index.js"];
+  let results;
+  try {
+    results = await runAllWaitFunctions({ dir, stateFile, invoke: true, spawnFn: fakeSpawn });
+  } finally {
+    process.argv = origArgv;
+  }
+  assert.equal(results[0].fired, true);
+  assert.equal(results[0].oneshotConsumed, true);
+  assert.equal(fs.existsSync(path.join(dir, "once.js")), false);
+  assert.equal("once" in JSON.parse(fs.readFileSync(stateFile)), false);
+});
+
+test("oneshot is NOT consumed when the agent run fails", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  fs.writeFileSync(path.join(dir, "once.js"), `export const oneshot = true;
+export async function check() { return { fire: true, context: "one time" }; }`);
+  const fakeSpawn = () => ({ on: (ev, cb) => { if (ev === "exit") setImmediate(() => cb(1)); } });
+  const origArgv = process.argv;
+  process.argv = ["/usr/bin/node", "/path/to/index.js"];
+  let results;
+  try {
+    results = await runAllWaitFunctions({ dir, stateFile, invoke: true, spawnFn: fakeSpawn });
+  } finally {
+    process.argv = origArgv;
+  }
+  assert.equal(results[0].fired, true);
+  assert.equal(results[0].oneshotConsumed, undefined);
+  assert.equal(fs.existsSync(path.join(dir, "once.js")), true);
+});
+
+test("listFunctionDirs includes the user drop dir when it exists; user dir wins on load", async () => {
+  const bundled = tmpDir();
+  const user = tmpDir() + "/nonexistent";
+  const origFn = process.env.DUDE_WAIT_FUNCTIONS_DIR;
+  const origCfg = process.env.DUDE_WAIT_USER_FUNCTIONS_DIR;
+  process.env.DUDE_WAIT_FUNCTIONS_DIR = bundled;
+  process.env.DUDE_WAIT_USER_FUNCTIONS_DIR = user;
+
+  // user dir missing -> only bundled
+  fs.mkdirSync(user);
+  assert.deepEqual(listFunctionDirs(), [bundled, user]);
+
+  // same name in both: user version is loaded (exports different purpose)
+  fs.writeFileSync(path.join(bundled, "dup.js"), "export async function check() { return { fire: false }; }");
+  fs.writeFileSync(path.join(user, "dup.js"), "export const purpose = 'user-version';\nexport async function check() { return { fire: false }; }");
+  assert.equal((await loadWaitFunction("dup")).purpose, "user-version");
+
+  if (origFn) process.env.DUDE_WAIT_FUNCTIONS_DIR = origFn; else delete process.env.DUDE_WAIT_FUNCTIONS_DIR;
+  if (origCfg) process.env.DUDE_WAIT_USER_FUNCTIONS_DIR = origCfg; else delete process.env.DUDE_WAIT_USER_FUNCTIONS_DIR;
+});

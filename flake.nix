@@ -193,6 +193,17 @@
                 '';
               };
 
+              # the fixed-schedule main timer is superseded by the event-driven
+              # wait system (waitTimer). enable it only for belt-and-braces
+              # polling; with the ai-tasks wait function installed it's noise.
+              timer.enable = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                  Enable the dumb-schedule dude-agent timer. Default false:
+                  the wait system (waitTimer) supersedes it.'';
+              };
+
               waitTimer = {
                 enable = lib.mkOption {
                   type = lib.types.bool;
@@ -205,10 +216,11 @@
                 };
                 interval = lib.mkOption {
                   type = lib.types.str;
-                  default = "hourly";
+                  default = "*:0/15";
                   description = ''
                     Systemd OnCalendar interval for checking the wait functions.
-                    Default is hourly; can run more frequently if needed.'';
+                    Default is every 15 minutes; the wait system should be
+                    tight enough to feel event-driven.'';
                 };
                 functionsDir = lib.mkOption {
                   type = lib.types.nullOr lib.types.path;
@@ -498,19 +510,22 @@
                 };
               };
 
-              # 3. Dude Agent Timer (schedules dude-agent runs)
-              systemd.user.timers.dude-agent = {
-                Unit = {
-                  Description = "Dude Agent Scheduled Execution Timer";
-                };
-                Timer = {
-                  OnCalendar = cfg.interval;
-                  Persistent = true;
-                };
-                Install = {
-                  WantedBy = [ "timers.target" ];
-                };
-              };
+              # 3. Dude Agent Timer (schedules dude-agent runs) — optional;
+              # the event-driven wait system supersedes it by default
+              systemd.user.timers.dude-agent =
+                lib.mkIf cfg.timer.enable
+                  {
+                    Unit = {
+                      Description = "Dude Agent Scheduled Execution Timer";
+                    };
+                    Timer = {
+                      OnCalendar = cfg.interval;
+                      Persistent = true;
+                    };
+                    Install = {
+                      WantedBy = [ "timers.target" ];
+                    };
+                  };
 
               # 3b. dude-wait: event-driven invocation of agent purposes.
               # one frequently-running timer checks all wait functions and
