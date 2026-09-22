@@ -290,6 +290,26 @@ export function consumeOneShot(name, { dir, stateFile } = {}) {
   return true;
 }
 
+/**
+ * restore a wait function's persisted state to a previous value. used by
+ * the detached-fire path: runWaitFunction persists the function's new
+ * state (post-fire hash) the moment a check fires, BEFORE the agent run
+ * happens. if that detached run later dies uncleanly, processPendingRe-
+ * baselines clears the pending entry but the new state would remain — the
+ * event would be consumed with no agent run ever happening (a silently
+ * starved task). so after a successful detached spawn we roll the
+ * function's state back to its pre-check value; the pending-rebaseline
+ * refresh re-saves the current state after a clean run. on an unclean run
+ * the pre-fire state survives -> the function re-fires next tick (retry
+ * semantics) instead of losing the event.
+ */
+export function restoreWaitFunctionState(name, priorState, { dir, stateFile } = {}) {
+  const statePath = stateFile || defaultStateFile();
+  const state = loadState(statePath);
+  state[name] = priorState !== undefined ? priorState : null;
+  saveState(statePath, state);
+}
+
 /** cli-visible env override: DUDE_WAIT_DETACH=off forces synchronous spawns */
 export function detachEnabled() {
   if (process.env.DUDE_WAIT_DETACH === "off") return false;
@@ -326,6 +346,9 @@ export function spawnDetachedAgent({ args, spawnFn, unit }) {
     `--description=dude-agent wait-fired run (${unit})`,
     ...setenv,
     process.execPath, // interpreter
+    ...args,          // agent entry + flags — was previously DROPPED, so
+                      // every detached fire ran bare `node` (silent REPL
+                      // exit on /dev/null stdin) and reported ok:true
   ];
   return new Promise((resolve) => {
     let stderr = "";
@@ -445,6 +468,9 @@ export async function runAllWaitFunctions({ dir, stateFile, invoke = true, spawn
       continue;
     }
     let outcome;
+    // snapshot the function's pre-check state BEFORE running the check —
+    // runWaitFunction persists post-fire state the moment a check fires
+    const priorState = loadState(stateFile)[name] ?? null;
     try {
       outcome = await runWaitFunction(name, { dir, stateFile });
     } catch (err) {
@@ -467,6 +493,10 @@ export async function runAllWaitFunctions({ dir, stateFile, invoke = true, spawn
       let detached = null;
       if (forceDetached || (!spawnFn && detachEnabled())) {
         detached = await spawnDetachedAgent({ args: [agentEntry, ...args], unit, spawnFn });
+      }
+      if (detached && detached.ok) {
+        // rewind the state the check just saved — see restoreWaitFunctionState
+        restoreWaitFunctionState(name, priorState, { dir, stateFile });
       }
       if (detached && detached.ok) {
         // hand outcome resolution to a later tick: the run is in its own

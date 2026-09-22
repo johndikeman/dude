@@ -13,6 +13,7 @@ import {
   runAllWaitFunctions,
   refreshWaitFunctionState,
   defaultStateFile,
+  spawnDetachedAgent,
 } from "./src/wait-runner.js";
 
 function tmpDir() {
@@ -399,6 +400,31 @@ test("listFunctionDirs includes the user drop dir when it exists; user dir wins 
   if (origCfg) process.env.DUDE_WAIT_USER_FUNCTIONS_DIR = origCfg; else delete process.env.DUDE_WAIT_USER_FUNCTIONS_DIR;
 });
 
+test("detached spawn argv includes the agent entry and flags (regression: args were dropped, unit ran bare node)", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  fs.writeFileSync(path.join(dir, "fired.js"), ALWAYS_FN);
+  const captured = [];
+  const spawnFn = (exe, argv) => {
+    if (exe === "systemd-run") {
+      captured.push(argv);
+      return fakeDetachedSpawn();
+    }
+    return { on: (ev, cb) => { if (ev === "exit") setImmediate(() => cb(0)); } };
+  };
+  const results = await runAllWaitFunctions({ dir, stateFile, invoke: true, forceDetached: true, spawnFn });
+  assert.equal(results[0].invoked.detached, true);
+  const argv = captured[0];
+  const entryIdx = argv.indexOf("--once") - 1;
+  const interpreter = argv[entryIdx - 1];
+  const entry = argv[entryIdx];
+  assert.ok(interpreter.endsWith("/node"), `expected node interpreter, got ${interpreter}`);
+  assert.equal(path.basename(entry), "index.js");
+  assert.ok(argv.includes("--once"), "agent flags must reach the transient unit");
+  assert.ok(argv.includes("--context"));
+  assert.ok(argv.includes("go"));
+});
+
 // ---- new behavior: detached spawns + lazy pending re-baseline ----
 
 // child-like fake for the systemd-run client spawn: exits 0 once the
@@ -453,7 +479,9 @@ test("lazy rebaseline: newer last-run exit 0 refreshes state + consumes oneshot"
   process.env.DUDE_LAST_RUN_FILE = lastRunFile;
   try {
     const fireResults = await runAllWaitFunctions({ dir, stateFile, invoke: true, forceDetached: true, spawnFn: fakeDetachedSpawn });
-    console.error("DEBUG fire:", JSON.stringify(fireResults), "pending:", JSON.stringify(pendingRebaselineNames({ stateFile })));
+    // ensure the synthetic last-run ts is strictly newer than firedAt
+    // (same-millisecond writes would make newerThan() return null)
+    await new Promise((r) => setTimeout(r, 10));
     // the agent run finished cleanly after firedAt: write last-run with exit 0
     writeRunResult({ exitCode: 0, file: lastRunFile });
     const resolved = await processPendingRebaselines({ dir, stateFile });
@@ -489,9 +517,12 @@ test("lazy rebaseline: newer last-run exit != 0 clears pending WITHOUT refresh (
     writeRunResult({ exitCode: 1, file: lastRunFile });
     await processPendingRebaselines({ dir, stateFile });
     assert.deepEqual(pendingRebaselineNames({ stateFile }), []);
-    // state NOT refreshed: still holds the fire-time hash of v2 → next tick retries
-    const cur = (await import("crypto")).createHash("sha256").update(fs.readFileSync(watchFile)).digest("hex");
-    assert.equal(JSON.parse(fs.readFileSync(stateFile)).watch, cur);
+    // the fire-time state was rewound to the pre-check baseline, so the
+    // unclean run did NOT consume the event: next tick re-fires
+    const v1 = (await import("crypto")).createHash("sha256").update("v1\n").digest("hex");
+    assert.equal(JSON.parse(fs.readFileSync(stateFile)).watch, v1);
+    const refire = await runAllWaitFunctions({ dir, stateFile, invoke: false });
+    assert.equal(refire[0].fired, true);
   } finally {
     delete process.env.WATCH_FILE;
     if (origLast) process.env.DUDE_LAST_RUN_FILE = origLast; else delete process.env.DUDE_LAST_RUN_FILE;
