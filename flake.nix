@@ -752,7 +752,7 @@
                             pkgs._1password-cli
                             pkgs.coreutils
                           ]
-                        }:/usr/bin:/bin"
+                        }:${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin:/usr/bin:/bin"
                       ];
                       # same env files as the main obsidian-sync service: the
                       # .opvars file carries op:// refs that need the 1p
