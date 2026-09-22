@@ -17,7 +17,7 @@ jobs:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          GH_TOKEN: "op://dude GHA SA/dudeagent-github-pat/token"
+          GH_TOKEN: "op://AI/dudeagent-github-pat/token"
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
