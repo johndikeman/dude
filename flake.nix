@@ -315,6 +315,27 @@
                   description = "Path to the local Obsidian vault to sync.";
                 };
 
+                extraVaults = lib.mkOption {
+                  type = lib.types.listOf (lib.types.submodule {
+                    options = {
+                      name = lib.mkOption {
+                        type = lib.types.str;
+                        description = "Remote obsidian vault name (as shown by ob sync-list-remote).";
+                      };
+                      path = lib.mkOption {
+                        type = lib.types.str;
+                        description = "Local vault path.";
+                      };
+                    };
+                  });
+                  default = [ ];
+                  description = ''
+                    Additional obsidian vaults to sync, each as its own
+                    continuous obsidian-sync-<name>.service (the headless CLI
+                    syncs one vault per process). Setup (sync-setup) runs in
+                    ExecStartPre and is idempotent.'';
+                };
+
               };
 
               gitUserName = lib.mkOption {
@@ -387,9 +408,11 @@
                   servicesToCheck = [
                     "dude-agent-watch.service"
                   ]
-                  ++ lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService) [
-                    "obsidian-sync.service"
-                  ];
+                  ++ lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService) (
+                    [ "obsidian-sync.service" ]
+                    ++ lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService)
+                      (map (v: "obsidian-sync-${v.name}.service") cfg.obsidianSync.extraVaults)
+                  );
                   timeoutSecs = 300;
                 in
                 lib.optionalString (servicesToCheck != [ ]) ''
@@ -695,6 +718,49 @@
                     };
                   })
                 cfg.purposes);
+            })
+
+            # 4b. extra continuous vault syncs (one service per vault — the
+            # headless CLI syncs a single vault per process). separate merge
+            # member: dynamic unit names can't share a `services` attr with
+            # the static defs above.
+            (lib.mkIf (cfg.obsidianSync.enable && cfg.obsidianSync.separateService && cfg.obsidianSync.extraVaults != [ ]) {
+            systemd.user.services =
+                lib.listToAttrs (map (v: {
+                  name = "obsidian-sync-${v.name}";
+                  value = {
+                    Unit = {
+                      Description = "Obsidian Continuous Headless Sync (${v.name})";
+                      After = [ "network.target" ];
+                      StartLimitBurst = "5";
+                      StartLimitIntervalSec = "120s";
+                    };
+                    Service = {
+                      Type = "simple";
+                      ExecStartPre = [
+                        "${pkgs.coreutils}/bin/mkdir -p ${v.path}"
+                        "${obLoginScript}"
+                        "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync-setup --vault ${lib.strings.escapeShellArg v.name} --path ${v.path}"
+                      ];
+                      ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync --continuous --path ${v.path}";
+                      Restart = "always";
+                      RestartSec = "10s";
+                      Environment = [
+                        "PATH=${
+                          lib.makeBinPath [
+                            pkgs.nodejs_24
+                            pkgs._1password-cli
+                            pkgs.coreutils
+                          ]
+                        }:/usr/bin:/bin"
+                      ];
+                    };
+                    Install = {
+                      WantedBy = [ "default.target" ];
+                    };
+                  };
+                })
+                cfg.obsidianSync.extraVaults);
             })
 
             ]);
