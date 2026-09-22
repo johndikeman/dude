@@ -20,6 +20,20 @@ test("loadPurpose loads the prediction-markets purpose", async () => {
   assert.deepEqual(p.skillPaths, ["prediction-markets"]);
 });
 
+test("loadPurpose loads the meal-planner purpose", async () => {
+  const p = await loadPurpose("meal-planner");
+  assert.equal(p.name, "meal-planner");
+  assert.ok(p.prompt.length > 50);
+  assert.ok(p.prompt.includes("meal-planner skill"));
+  assert.deepEqual(p.skillPaths, ["meal-planner"]);
+  assert.equal(p.trimBasePrompt, true);
+  // the skill file it references must exist in the packaged skills dir
+  assert.ok(
+    fs.existsSync(".pi/skills/meal-planner/SKILL.md"),
+    "meal-planner skill dir must exist",
+  );
+});
+
 test("loadPurpose throws for unknown purpose", async () => {
   await assert.rejects(() => loadPurpose("does-not-exist"), /unknown purpose/);
 });
