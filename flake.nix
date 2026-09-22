@@ -754,6 +754,14 @@
                           ]
                         }:/usr/bin:/bin"
                       ];
+                      # same env files as the main obsidian-sync service: the
+                      # .opvars file carries op:// refs that need the 1p
+                      # service account token (in ~/dude-workspace/.env) to
+                      # resolve
+                      EnvironmentFile = [
+                        "-${cfg.workingDirectory}/.env"
+                        "-${cfg.configDirectory}/.env"
+                      ];
                     };
                     Install = {
                       WantedBy = [ "default.target" ];
