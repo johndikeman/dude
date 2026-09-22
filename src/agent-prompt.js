@@ -31,6 +31,7 @@ the task index file must stay tiny (a few kb at most): checklist lines plus poin
 When the task is complete, mark it as done in the task index (${paths.tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
 
 previous session logs can be found in ${paths.piSessionDir} 
+obsidian markdown tip: never wrap text in bare angle brackets (like <this>) in vault files — obsidian renders them as html tags and eats your content. use backticks or quotes instead.
 use lowercase writing and a semi-informal tone.
 
 Context:
@@ -55,6 +56,7 @@ purpose-run rules:
 - if you do change code somewhere, commit to a feature branch off latest main and open a PR; otherwise leave repos alone.
 
 use lowercase writing and a semi-informal tone.
+obsidian markdown tip: never wrap text in bare angle brackets (like <this>) in vault files — obsidian renders them as html tags and eats your content. use backticks or quotes instead.
 
 ## purpose: ${purpose.name}
 ${purpose.prompt}

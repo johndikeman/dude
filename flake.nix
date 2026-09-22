@@ -467,9 +467,11 @@
                     "-${cfg.workingDirectory}/.env"
                     "-${cfg.configDirectory}/.env"
                   ];
+                  # grace window so the agent's SIGTERM handler can mark the
+                  # session + write a resume breadcrumb before SIGKILL
+                  TimeoutStopSec = "90s";
                 };
               };
-
               # 2. Dude Agent Watch Service (long-running Discord trigger listener)
               systemd.user.services.dude-agent-watch = {
                 Unit = {
@@ -504,6 +506,9 @@
                     "-${cfg.workingDirectory}/.env"
                     "-${cfg.configDirectory}/.env"
                   ];
+                  # grace window for the SIGTERM handler on an in-flight
+                  # discord-triggered run
+                  TimeoutStopSec = "90s";
                 };
                 Install = {
                   WantedBy = [ "default.target" ];
@@ -562,6 +567,10 @@
                         "-${cfg.workingDirectory}/.env"
                         "-${cfg.configDirectory}/.env"
                       ];
+                      # agent runs live in their own transient units now, so
+                      # this service is short-lived; the grace window just
+                      # covers a legacy sync-spawned agent's SIGTERM handling
+                      TimeoutStopSec = "90s";
                     };
                   };
 
@@ -662,6 +671,7 @@
                           "-${cfg.workingDirectory}/.env"
                           "-${cfg.configDirectory}/.env"
                         ];
+                        TimeoutStopSec = "90s";
                       };
                     };
                   })
