@@ -19,6 +19,12 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "wait-"));
 }
 
+// isolation: point the agent-lock somewhere inert so tests don't collide
+// with a REAL running agent (e.g. the very session running these tests).
+// no lock file at this path → isAgentRunning() false everywhere.
+const inertLockDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-lock-"));
+process.env.DUDE_AGENT_LOCK_FILE = path.join(inertLockDir, "agent-lock.json");
+
 // sample wait functions written to a temp dir
 const FLAKY_FN = `
 export const purpose = "custom-purpose";
@@ -265,7 +271,13 @@ import {
   normalizeContext,
   consumeOneShot,
   listFunctionDirs,
+  processPendingRebaselines,
+  pendingRebaselineNames,
+  recordPendingRebaseline,
 } from "./src/wait-runner.js";
+import { spawnSync } from "child_process";
+import { writeRunResult, readLastRun } from "./src/run-result.js";
+import { writeBreadcrumb, writeResumeOneShot, readBreadcrumb, clearBreadcrumb } from "./src/interrupted.js";
 
 test("acquireLock takes the lock, blocks a second holder, releases cleanly", () => {
   const dir = tmpDir();
@@ -283,9 +295,11 @@ test("acquireLock takes the lock, blocks a second holder, releases cleanly", () 
 test("acquireLock takes over a stale (dead-pid) lock", () => {
   const dir = tmpDir();
   const lockFile = path.join(dir, "wait-lock.json");
-  // find a pid that doesn't exist (well above any real pid on this box)
-  const dead = process.pid + 100000;
-  fs.writeFileSync(lockFile, JSON.stringify({ pid: dead, startedAt: Date.now() }));
+  // use a REAL dead pid (a spawned child's), not a pid guess — a guessed
+  // pid can collide with a live process and flake
+  const dead = spawnSync(process.execPath, ["-e", ""], { encoding: "utf8" });
+  assert.equal(dead.status, 0);
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: dead.pid, startedAt: Date.now() }));
   const lock = acquireLock(lockFile, { staleMs: 60000 });
   assert.ok(lock);
   assert.equal(lock.pid, process.pid);
@@ -383,4 +397,219 @@ test("listFunctionDirs includes the user drop dir when it exists; user dir wins 
 
   if (origFn) process.env.DUDE_WAIT_FUNCTIONS_DIR = origFn; else delete process.env.DUDE_WAIT_FUNCTIONS_DIR;
   if (origCfg) process.env.DUDE_WAIT_USER_FUNCTIONS_DIR = origCfg; else delete process.env.DUDE_WAIT_USER_FUNCTIONS_DIR;
+});
+
+// ---- new behavior: detached spawns + lazy pending re-baseline ----
+
+// child-like fake for the systemd-run client spawn: exits 0 once the
+// transient unit is accepted (the agent inside is not our child anymore)
+const fakeDetachedSpawn = () => {
+  const c = {
+    stderr: { on() {} },
+    on(ev, cb) {
+      if (ev === "exit") setImmediate(() => cb(0));
+      return c;
+    },
+  };
+  return c;
+};
+
+const FAILING_DETACHED_SPAWN = () => {
+  const c = {
+    stderr: { on() {} },
+    on(ev, cb) {
+      if (ev === "exit") setImmediate(() => cb(1));
+      return c;
+    },
+  };
+  return c;
+};
+
+const ONESHOT_DETACHED_FN = `export const oneshot = true;
+export async function check() { return { fire: true, context: "one time" }; }`;
+
+test("detached fire: pending rebaseline recorded, nothing consumed yet", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  fs.writeFileSync(path.join(dir, "once.js"), ONESHOT_DETACHED_FN);
+  const results = await runAllWaitFunctions({ dir, stateFile, invoke: true, forceDetached: true, spawnFn: fakeDetachedSpawn });
+  assert.equal(results[0].fired, true);
+  assert.equal(results[0].invoked.detached, true);
+  // no synchronous rebaseline/consumption
+  assert.equal(results[0].rebaselined, undefined);
+  assert.equal(results[0].oneshotConsumed, undefined);
+  // pending entry recorded
+  assert.deepEqual(pendingRebaselineNames({ stateFile }), ["once"]);
+  // oneshot file still there (it's consumed lazily after a clean run)
+  assert.equal(fs.existsSync(path.join(dir, "once.js")), true);
+});
+
+test("lazy rebaseline: newer last-run exit 0 refreshes state + consumes oneshot", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  fs.writeFileSync(path.join(dir, "once.js"), ONESHOT_DETACHED_FN);
+  const lastRunFile = path.join(tmpDir(), "last-run.json");
+  const orig = process.env.DUDE_LAST_RUN_FILE;
+  process.env.DUDE_LAST_RUN_FILE = lastRunFile;
+  try {
+    const fireResults = await runAllWaitFunctions({ dir, stateFile, invoke: true, forceDetached: true, spawnFn: fakeDetachedSpawn });
+    console.error("DEBUG fire:", JSON.stringify(fireResults), "pending:", JSON.stringify(pendingRebaselineNames({ stateFile })));
+    // the agent run finished cleanly after firedAt: write last-run with exit 0
+    writeRunResult({ exitCode: 0, file: lastRunFile });
+    const resolved = await processPendingRebaselines({ dir, stateFile });
+    assert.equal(resolved[0].name, "once");
+    assert.equal(resolved[0].clean, true);
+    // pending cleared, oneshot consumed
+    assert.deepEqual(pendingRebaselineNames({ stateFile }), []);
+    assert.equal(fs.existsSync(path.join(dir, "once.js")), false);
+    assert.equal("once" in JSON.parse(fs.readFileSync(stateFile)), false);
+  } finally {
+    if (orig) process.env.DUDE_LAST_RUN_FILE = orig; else delete process.env.DUDE_LAST_RUN_FILE;
+  }
+});
+
+test("lazy rebaseline: newer last-run exit != 0 clears pending WITHOUT refresh (re-fires)", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  const watchFile = path.join(tmpDir(), "watched.md");
+  fs.writeFileSync(path.join(dir, "watch.js"), HASH_FN);
+  fs.writeFileSync(watchFile, "v1\n");
+  process.env.WATCH_FILE = watchFile;
+  const lastRunFile = path.join(tmpDir(), "last-run.json");
+  const origLast = process.env.DUDE_LAST_RUN_FILE;
+  const origWatch = process.env.WATCH_FILE;
+  process.env.DUDE_LAST_RUN_FILE = lastRunFile;
+  try {
+    await runWaitFunction("watch", { dir, stateFile }); // baseline
+    fs.writeFileSync(watchFile, "v2\n");
+    // fire detached
+    const results = await runAllWaitFunctions({ dir, stateFile, invoke: true, forceDetached: true, spawnFn: fakeDetachedSpawn });
+    assert.equal(results[0].invoked.detached, true);
+    // agent failed
+    writeRunResult({ exitCode: 1, file: lastRunFile });
+    await processPendingRebaselines({ dir, stateFile });
+    assert.deepEqual(pendingRebaselineNames({ stateFile }), []);
+    // state NOT refreshed: still holds the fire-time hash of v2 → next tick retries
+    const cur = (await import("crypto")).createHash("sha256").update(fs.readFileSync(watchFile)).digest("hex");
+    assert.equal(JSON.parse(fs.readFileSync(stateFile)).watch, cur);
+  } finally {
+    delete process.env.WATCH_FILE;
+    if (origLast) process.env.DUDE_LAST_RUN_FILE = origLast; else delete process.env.DUDE_LAST_RUN_FILE;
+    void origWatch;
+  }
+});
+
+test("lazy rebaseline: no newer last-run result counts as failure (agent died uncleanly)", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  fs.writeFileSync(path.join(dir, "once.js"), ONESHOT_DETACHED_FN);
+  const lastRunFile = path.join(tmpDir(), "last-run.json");
+  const orig = process.env.DUDE_LAST_RUN_FILE;
+  process.env.DUDE_LAST_RUN_FILE = lastRunFile;
+  try {
+    // a STALE result predating the fire
+    fs.writeFileSync(lastRunFile, JSON.stringify({ ts: "2020-01-01T00:00:00Z", exitCode: 0 }));
+    await runAllWaitFunctions({ dir, stateFile, invoke: true, forceDetached: true, spawnFn: fakeDetachedSpawn });
+    await processPendingRebaselines({ dir, stateFile });
+    // stale result -> not clean: no refresh, oneshot NOT consumed (retry)
+    assert.deepEqual(pendingRebaselineNames({ stateFile }), []);
+    assert.equal(fs.existsSync(path.join(dir, "once.js")), true);
+  } finally {
+    if (orig) process.env.DUDE_LAST_RUN_FILE = orig; else delete process.env.DUDE_LAST_RUN_FILE;
+  }
+});
+
+test("pending rebaseline keeps a fired function from double-firing next tick", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  const watchFile = path.join(tmpDir(), "watched.md");
+  fs.writeFileSync(path.join(dir, "watch.js"), HASH_FN);
+  fs.writeFileSync(watchFile, "v1\n");
+  process.env.WATCH_FILE = watchFile;
+  const orig = process.env.WATCH_FILE;
+  try {
+    await runWaitFunction("watch", { dir, stateFile }); // baseline
+    fs.writeFileSync(watchFile, "v2\n");
+    await runAllWaitFunctions({ dir, stateFile, invoke: true, forceDetached: true, spawnFn: fakeDetachedSpawn });
+    // next tick while the detached run is still unresolved: must skip, not re-fire
+    const results = await runAllWaitFunctions({ dir, stateFile, invoke: true, forceDetached: true, spawnFn: fakeDetachedSpawn });
+    assert.equal(results[0].skippedBusy, true);
+    assert.equal(results[0].fired, undefined);
+  } finally {
+    delete process.env.WATCH_FILE;
+    void orig;
+  }
+});
+
+test("resume oneshot: fires with --resume-interrupted, consumes breadcrumb, retires when none", async () => {
+  const cfg = tmpDir();
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  const origCfg = process.env.DUDE_CONFIG_DIR;
+  process.env.DUDE_CONFIG_DIR = cfg;
+  try {
+    // no breadcrumb -> writeResumeOneShot's check retires itself
+    const f = writeResumeOneShot({ reason: "SIGTERM", ts: new Date().toISOString(), sessionFile: "/tmp/x.jsonl", dir });
+    assert.equal(fs.existsSync(f), true);
+    let results = await runAllWaitFunctions({ dir, stateFile, invoke: true, spawnFn: () => ({ on: (ev, cb) => { if (ev === "exit") setImmediate(() => cb(0)); } }) });
+    const retired = results.find((r) => r.name === "resume-interrupted");
+    assert.equal(retired.fired, false);
+    assert.equal(fs.existsSync(f), false); // self-retired
+    // with a breadcrumb: fires and clears it
+    writeBreadcrumb({ reason: "SIGTERM", sessionFile: "/tmp/y.jsonl", configDir: cfg });
+    writeResumeOneShot({ reason: "SIGTERM", ts: new Date().toISOString(), sessionFile: "/tmp/y.jsonl", dir });
+    const spawned = [];
+    results = await runAllWaitFunctions({
+      dir, stateFile, invoke: true, forceDetached: false,
+      spawnFn: (exe, args) => {
+        assert.ok(args.includes("--resume-interrupted"));
+        return { on: (ev, cb) => { if (ev === "exit") setImmediate(() => cb(0)); } };
+      },
+    });
+    assert.equal(results.find((r) => r.name === "resume-interrupted").fired, true);
+    assert.equal(readBreadcrumb({ configDir: cfg }), null);
+    void spawned;
+  } finally {
+    if (origCfg) process.env.DUDE_CONFIG_DIR = origCfg; else delete process.env.DUDE_CONFIG_DIR;
+  }
+});
+
+test("runAllWaitFunctions skips checks while an agent is busy (state untouched)", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  fs.writeFileSync(path.join(dir, "fired.js"), ALWAYS_FN);
+  // simulate a live agent: lock file whose pid is this (live) test process
+  const lockFile = path.join(tmpDir(), "agent-lock.json");
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  const orig = process.env.DUDE_AGENT_LOCK_FILE;
+  process.env.DUDE_AGENT_LOCK_FILE = lockFile;
+  let results;
+  try {
+    results = await runAllWaitFunctions({ dir, stateFile, invoke: true, busyCheck: true });
+  } finally {
+    if (orig) process.env.DUDE_AGENT_LOCK_FILE = orig; else delete process.env.DUDE_AGENT_LOCK_FILE;
+  }
+  assert.equal(results[0].skippedBusy, true);
+  // crucially: the check must NOT have run, so state stays untouched and
+  // the fire is not consumed by the busy agent's exit-75
+  assert.equal(fs.existsSync(stateFile), false);
+});
+
+test("detached spawn failure falls back to the synchronous path", async () => {
+  const dir = tmpDir();
+  const stateFile = path.join(tmpDir(), "s.json");
+  fs.writeFileSync(path.join(dir, "fired.js"), ALWAYS_FN);
+  const spawned = [];
+  // systemd-run client exits 1 (unit rejected) -> sync fallback uses the
+  // same spawnFn but with node + agentEntry argv
+  const spawnFn = (exe, argv) => {
+    if (exe === "systemd-run") return FAILING_DETACHED_SPAWN();
+    return { on: (ev, cb) => { if (ev === "exit") setImmediate(() => cb(0)); } };
+  };
+  const results = await runAllWaitFunctions({ dir, stateFile, invoke: true, forceDetached: true, spawnFn });
+  assert.equal(results[0].fired, true);
+  // sync path result: regular exitCode, sync rebaseline happened
+  assert.equal(results[0].invoked.exitCode, 0);
+  assert.equal(results[0].rebaselined, true);
+  assert.deepEqual(pendingRebaselineNames({ stateFile }), []);
 });

@@ -33,6 +33,8 @@ a wait function is a nodejs module exporting:
 export const purpose = null;
 // optional: delete this file after its first clean fire (one-shot)
 export const oneshot = true;
+// optional: extra CLI flags appended to the agent invocation
+export const args = ["--resume-interrupted"];
 
 // state === whatever you returned as `state` last tick (persisted),
 // or null on the very first run
@@ -141,6 +143,40 @@ baseline it via `dude-wait --check-only` with isolated state (so it won't fire
 on its first real tick), and note what you did in the task doc / agent log.
 a later tick deletes the file after firing. don't leave one-shots pointing at
 things that may never change — they're files on disk, cheap, but review.
+
+## how a fired run actually executes now (detached)
+
+a fired agent run is NOT a synchronous child of the wait service anymore.
+the runner spawns it into its own transient systemd user unit
+(`dude-agent-wait-<function>.service`) via `systemd-run --user`. two
+consequences:
+
+- deploys can't kill it: restarting dude-wait.service no longer touches
+  in-flight agent runs. you can watch one with
+  `systemctl --user status dude-agent-wait-ai-tasks`.
+- the runner learns the outcome LAZILY: the agent writes
+  `~/.config/dude/last-run.json` on exit; the next tick refreshes your state
+  (clean exit), leaves it stale (failure → re-fire), or leaves everything
+  pending while the run is in flight. so don't be surprised that the tick
+  that fires you exits in ~seconds.
+
+## interrupted runs: resume + the self-rescue oneshot
+
+if a deploy (or anything) SIGTERMs an in-flight agent run, the agent's
+graceful handler (src/index.js + src/interrupted.js) does three things
+before exiting 0:
+
+1. marks its pi session with an `interrupted` custom entry
+2. writes a breadcrumb `~/.config/dude/interrupted.json` naming the session
+3. writes a one-shot `wait-functions.d/resume-interrupted.js` that fires the
+   next tick with `--resume-interrupted` — the woken run reopens the killed
+   session and finishes/closes out its own half-done work
+
+the oneshot is fixed-name (re-kills overwrite), TTL-expired after 24h, and
+self-retires if the breadcrumb is gone — so a crash loop can't accumulate
+resumes. you don't need to build any of this manually; just know the
+mechanism exists and don't delete interrupted.json / the resume oneshot
+out from under it.
 
 ## gotchas
 

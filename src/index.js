@@ -21,6 +21,14 @@ import { pathToFileURL } from "url";
 import { loadPurpose, parsePurposeArgs } from "./purpose.js";
 import { acquireLock, acquireLockOrExit, releaseLock } from "./agent-lock.js";
 import { buildAgentPrompt } from "./agent-prompt.js";
+import {
+  writeBreadcrumb,
+  readBreadcrumb,
+  clearBreadcrumb,
+  writeResumeOneShot,
+  buildResumePrompt,
+} from "./interrupted.js";
+import { writeRunResult } from "./run-result.js";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
@@ -92,6 +100,72 @@ let emptyResponseRetries = 0; // nudges issued for the current run
 let currentRunningTask = null;
 let pausedTaskInfo = null; // Store info about paused tasks for status display
 let lastRunHitQuotaLimit = false;
+
+// the live session (set by runCycle, cleared on run end) — used by the
+// SIGTERM handler to mark the session + write the resume breadcrumb
+let activeSession = null;
+let activePurpose = null;
+let interruptHandled = false;
+
+/**
+ * graceful SIGTERM: deploys restart dude-wait.service (and the purpose
+ * services), which SIGTERMs the whole cgroup and kills in-flight agent
+ * runs mid-work. instead of dying silently:
+ *   - mark the pi session with an `interrupted` custom entry
+ *   - drop a breadcrumb (interrupted.json) naming the session file
+ *   - write a one-shot resume wait function that re-invokes the agent on
+ *     the next tick with --resume-interrupted
+ *   - release the agent lock and exit 0 (so the runner re-baselines the
+ *     fired wait function and doesn't blindly re-fire it)
+ *
+ * note the resumed session still gets killed again on the NEXT deploy —
+ * but each resume continues its own session, so work converges instead
+ * of being forked. systemd gives us a grace window (TimeoutStopSec=90s).
+ */
+function handleInterruptSignal(sig) {
+  if (interruptHandled) return;
+  interruptHandled = true;
+  try {
+    if (activeSession && isRunning) {
+      const bc = writeBreadcrumb({
+        reason: sig,
+        sessionFile: activeSession.sessionFile ?? null,
+        purpose: activePurpose,
+      });
+      try {
+        activeSession.appendCustomEntry(
+          "interrupted",
+          { reason: sig, ts: bc.ts, note: "session ended abnormally; see interrupted.json + resume oneshot" },
+        );
+      } catch (e) {
+        log(`interrupt: session marker write failed: ${e?.message || e}`);
+      }
+      try {
+        const f = writeResumeOneShot({ reason: sig, ts: bc.ts, sessionFile: bc.sessionFile, purpose: bc.purpose });
+        log(`interrupt: wrote resume one-shot ${f}`);
+      } catch (e) {
+        log(`interrupt: resume oneshot write failed: ${e?.message || e}`);
+      }
+      log(`interrupt: ${sig} during agent run; breadcrumb written (session=${bc.sessionFile ?? "?"})`);
+    }
+  } catch (e) {
+    log(`interrupt: breadcrumb handling failed: ${e?.stack || e?.message || e}`);
+  }
+  releaseLock();
+  process.exit(sig === "SIGINT" ? 130 : 0);
+}
+process.on("SIGTERM", () => handleInterruptSignal("SIGTERM"));
+process.on("SIGINT", () => handleInterruptSignal("SIGINT"));
+
+// always record how we exited so the wait runner's lazy re-baseline can
+// tell clean runs from failed ones for detached spawns
+process.on("exit", (code) => {
+  writeRunResult({
+    exitCode: interruptHandled ? 0 : code,
+    sessionFile: activeSession?.sessionFile ?? null,
+    purpose: activePurpose,
+  });
+});
 
 function getDiscordSessionMapPath() {
   return path.join(getPaths().configDir, "discord-message-sessions.json");
@@ -246,6 +320,22 @@ async function runCycle(message = null, sessionFileToResume = null) {
   }
   log(`runCycle: working directory = ${cwd}`);
 
+  // interrupted-run resume: --resume-interrupted opens the session named
+  // in the breadcrumb and lets the model finish/close out its prior work
+  const wantResume = process.argv.includes("--resume-interrupted");
+  let resumeInfo = null;
+  if (wantResume) {
+    const bc = readBreadcrumb({ configDir: paths.configDir });
+    if (bc?.sessionFile && fs.existsSync(bc.sessionFile)) {
+      sessionFileToResume = bc.sessionFile;
+      resumeInfo = bc;
+      log(`runCycle: resuming interrupted run from ${bc.sessionFile} (killed at ${bc.ts})`);
+    } else {
+      log("runCycle: --resume-interrupted set but no valid breadcrumb/session; running normally");
+    }
+    clearBreadcrumb(paths.configDir);
+  }
+
   // purpose support: dude-agent --once --purpose <name> [--context "..."]
   // loads a purpose-specific prompt + skills for special-purpose runs
   // (e.g. prediction-markets). the discord/watch path never passes --purpose.
@@ -333,6 +423,8 @@ async function runCycle(message = null, sessionFileToResume = null) {
     model,
     thinkingLevel: "low",
   });
+  activeSession = session;
+  activePurpose = purposeName;
   log(
     `runCycle: agent session created (sessionFile=${session.sessionFile ?? "<none>"})`,
   );
@@ -530,9 +622,11 @@ async function runCycle(message = null, sessionFileToResume = null) {
 
   // Actually kick off the agent run - without this the session sits idle.
   const promptToSend =
-    sessionFileToResume && message
-      ? `current date: ${new Date().toLocaleString("en-US")}\n\nuser sent a follow-up via discord:\n${message.content}`
-      : prompt;
+    resumeInfo
+      ? buildResumePrompt(resumeInfo)
+      : sessionFileToResume && message
+        ? `current date: ${new Date().toLocaleString("en-US")}\n\nuser sent a follow-up via discord:\n${message.content}`
+        : prompt;
   log("runCycle: sending prompt to agent...");
   session.prompt(promptToSend).catch(async (e) => {
     stopTyping?.();
