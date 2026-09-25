@@ -20,6 +20,7 @@ import {
 import { pathToFileURL } from "url";
 import { loadPurpose, parsePurposeArgs } from "./purpose.js";
 import { acquireLock, acquireLockOrExit, releaseLock } from "./agent-lock.js";
+import { startRuntimeCap, maxRuntimeMs } from "./runtime-cap.js";
 import { buildAgentPrompt } from "./agent-prompt.js";
 import {
   writeBreadcrumb,
@@ -106,6 +107,18 @@ let lastRunHitQuotaLimit = false;
 let activeSession = null;
 let activePurpose = null;
 let interruptHandled = false;
+// wall-clock cap stop-fn for the current run (see runtime-cap.js); armed
+// in runCycle, disarmed by releaseLockAndStopCap() on run end
+let stopRuntimeCap = null;
+
+/** end-of-run lock release that also disarms the wall-clock cap */
+function releaseLockAndStopCap() {
+  if (stopRuntimeCap) {
+    try { stopRuntimeCap(); } catch { /* nothing */ }
+    stopRuntimeCap = null;
+  }
+  releaseLock();
+}
 
 /**
  * graceful SIGTERM: deploys restart dude-wait.service (and the purpose
@@ -277,6 +290,17 @@ async function runCycle(message = null, sessionFileToResume = null) {
   isRunning = true;
   emptyResponseRetries = 0;
   lastRunHitQuotaLimit = false;
+  // wall-clock cap: a runaway run must never hold the agent lock
+  // indefinitely (incident 2026-09-24: a wait-fired run held the lock for
+  // 13h while every pm/discord/wait cycle was skipped). the cap aborts
+  // the session at the soft cap and hard-kills (exit 124) after grace.
+  // releaseLockAndStopCap() below disarms it when the run ends.
+  stopRuntimeCap = startRuntimeCap({
+    ms: maxRuntimeMs(),
+    log,
+    session: null, // session doesn't exist yet; re-armed with it below
+    releaseFn: () => releaseLock(),
+  });
   // cross-process guard: only one agent run at a time (a scheduled timer
   // run must not overlap a wait-fired or discord-triggered run — they'd
   // step on each other's task-file edits and sessions). --once invocations
@@ -425,6 +449,15 @@ async function runCycle(message = null, sessionFileToResume = null) {
   });
   activeSession = session;
   activePurpose = purposeName;
+  // re-arm the runtime cap now that the session exists, so the soft cap
+  // can abort it (the pre-session cap could only hard-kill).
+  if (stopRuntimeCap) stopRuntimeCap();
+  stopRuntimeCap = startRuntimeCap({
+    ms: maxRuntimeMs(),
+    log,
+    session,
+    releaseFn: () => releaseLock(),
+  });
   log(
     `runCycle: agent session created (sessionFile=${session.sessionFile ?? "<none>"})`,
   );
@@ -492,7 +525,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
         // empty-response nudge logic can re-prompt the dead session.
         if (loopAborted) {
           isRunning = false;
-          releaseLock();
+          releaseLockAndStopCap();
           currentRunningTask = null;
           stopTyping?.();
           log("pi finished: terminated by loop breaker.");
@@ -530,14 +563,14 @@ async function runCycle(message = null, sessionFileToResume = null) {
           session.prompt(nudgePrompt(emptyResponseRetries)).catch((e) => {
             log(`nudge prompt failed: ${e?.stack || e?.message || e}`);
             isRunning = false;
-            releaseLock();
+            releaseLockAndStopCap();
             stopTyping?.();
           });
           break;
         }
 
         isRunning = false;
-        releaseLock();
+        releaseLockAndStopCap();
         currentRunningTask = null;
         // Check if this was a quota pause
         log("pi finished successfully.");
@@ -591,7 +624,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
       case "auto_retry_end":
         stopTyping?.();
         isRunning = false;
-        releaseLock();
+        releaseLockAndStopCap();
         emptyResponseRetries = MAX_EMPTY_RESPONSE_RETRIES;
         currentRunningTask = null;
         pausedTaskInfo = null;
@@ -631,7 +664,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
   session.prompt(promptToSend).catch(async (e) => {
     stopTyping?.();
     isRunning = false;
-    releaseLock();
+    releaseLockAndStopCap();
     log(`runCycle: prompt failed: ${e?.stack || e?.message || e}`);
     if (message) {
       const reply = await message.reply(

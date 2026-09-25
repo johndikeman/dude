@@ -15,6 +15,7 @@ import {
   defaultStateFile,
   spawnDetachedAgent,
 } from "./src/wait-runner.js";
+import { readLock, acquireLock as acquireAgentLock } from "./src/agent-lock.js";
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "wait-"));
@@ -643,4 +644,60 @@ test("detached spawn failure falls back to the synchronous path", async () => {
   assert.equal(results[0].invoked.exitCode, 0);
   assert.equal(results[0].rebaselined, true);
   assert.deepEqual(pendingRebaselineNames({ stateFile }), []);
+});
+
+test("spawnDetachedAgent includes --runtime-maxsec (default and override)", async () => {
+  const spawned = [];
+  const spawnFn = (exe, argv) => {
+    spawned.push([exe, argv]);
+    return {
+      stderr: { on: () => {} },
+      on: (ev, cb) => { if (ev === "exit") setImmediate(() => cb(0)); },
+    };
+  };
+  const run = async (rt) => {
+    await spawnDetachedAgent({ args: ["--once"], spawnFn, unit: "dude-agent-wait-test", runtimeMaxSec: rt });
+  };
+  // default: derived from maxRuntimeMs() (4h default -> 14400s)
+  await run(undefined);
+  assert.equal(spawned[0][0], "systemd-run");
+  const argv0 = spawned[0][1];
+  assert.ok(argv0.some((a) => a === "--runtime-maxsec=14400"), `expected --runtime-maxsec=14400 in ${argv0.join(" ")}`);
+  // explicit override wins
+  await run(600);
+  assert.ok(spawned[1][1].some((a) => a === "--runtime-maxsec=600"));
+  // null disables
+  await run(null);
+  assert.ok(!spawned[2][1].some((a) => String(a).startsWith("--runtime-maxsec=")));
+});
+
+test("agent-lock: age-stale takeover reclaims lock from a hung live holder", () => {
+  // fresh lock held by a live pid (this process) -> busy
+  const lockFile = path.join(tmpDir(), "agent-lock.json");
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  assert.ok(readLock(lockFile), "fresh live lock is read");
+  // same live pid, but startedAt is 7h ago (beyond the 6h max age) -> stale
+  const oldTs = new Date(Date.now() - 7 * 3600 * 1000).toISOString();
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: oldTs }));
+  assert.equal(readLock(lockFile), null, "aged-out live lock treated as stale");
+  assert.ok(acquireAgentLock({ file: lockFile }), "hung holder's lock is taken over");
+  // custom maxAgeMs: 7h-old lock is fresh when maxAge is 8h
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: oldTs }));
+  assert.notEqual(readLock(lockFile, { maxAgeMs: 8 * 3600 * 1000 }), null);
+  // missing/unparseable startedAt: never stale by age (pid liveness guards it)
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid }));
+  assert.notEqual(readLock(lockFile), null);
+});
+
+test("agent-lock: env override DUDE_AGENT_LOCK_MAX_AGE_MS", () => {
+  const orig = process.env.DUDE_AGENT_LOCK_MAX_AGE_MS;
+  process.env.DUDE_AGENT_LOCK_MAX_AGE_MS = "1000";
+  try {
+    const lockFile = path.join(tmpDir(), "agent-lock.json");
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: twoMinutesAgo }));
+    assert.equal(readLock(lockFile), null, "lock older than 1s env max age is stale");
+  } finally {
+    delete process.env.DUDE_AGENT_LOCK_MAX_AGE_MS;
+  }
 });

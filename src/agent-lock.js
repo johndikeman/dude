@@ -24,6 +24,26 @@ import path from "path";
 /** exit code for "skipped because another agent holds the lock" */
 export const LOCK_SKIPPED_EXIT_CODE = 75;
 
+/**
+ * a lock older than this is considered stale EVEN IF the holder pid is
+ * alive. this covers a run that's hung instead of dead: pid checks alone
+ * never reclaim the lock, so one runaway run could starve every other
+ * scheduled cycle indefinitely (incident 2026-09-24: a wait-fired run
+ * held the lock for 13h while every pm/discord/wait cycle skipped).
+ *
+ * must be comfortably larger than any legitimate run — the runtime cap
+ * (src/runtime-cap.js, 4h default) kills hung runs well before this.
+ */
+export const DEFAULT_MAX_LOCK_AGE_MS = 6 * 60 * 60 * 1000;
+
+export function maxLockAgeMs(env = process.env) {
+  const raw = env.DUDE_AGENT_LOCK_MAX_AGE_MS;
+  if (raw == null || raw === "") return DEFAULT_MAX_LOCK_AGE_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_MAX_LOCK_AGE_MS;
+  return parsed;
+}
+
 export function defaultLockFile() {
   return process.env.DUDE_AGENT_LOCK_FILE ||
     path.join(
@@ -42,11 +62,19 @@ function isPidAlive(pid) {
   }
 }
 
-/** read and parse the lock file; returns null if missing/corrupt/stale-dead */
-export function readLock(file = defaultLockFile()) {
+/**
+ * read and parse the lock file; returns null if missing/corrupt/stale.
+ * stale means: holder pid dead, OR lock age exceeds maxLockAgeMs() with a
+ * parseable startedAt (hung-holder takeover). a lock with a missing or
+ * unparseable startedAt is never stale by age (can't judge) — pid
+ * liveness remains the guard for those.
+ */
+export function readLock(file = defaultLockFile(), { maxAgeMs = maxLockAgeMs(), now = Date.now() } = {}) {
   try {
     const lock = JSON.parse(fs.readFileSync(file, "utf8"));
     if (typeof lock.pid !== "number" || !isPidAlive(lock.pid)) return null;
+    const started = lock.startedAt ? Date.parse(lock.startedAt) : NaN;
+    if (Number.isFinite(started) && now - started > maxAgeMs) return null;
     return lock;
   } catch {
     return null;
