@@ -32,6 +32,15 @@ import path from "path";
 import { spawn } from "child_process";
 import { pathToFileURL, fileURLToPath } from "url";
 import { isAgentRunning } from "./agent-lock.js";
+import { maxRuntimeMs } from "./runtime-cap.js";
+
+/** systemd --runtime-maxsec for detached wait-fired agent runs; matches
+ * the in-agent runtime cap (slightly larger so the cap's graceful abort
+ * gets a chance before systemd kills the cgroup). 0/null disables. */
+export function defaultRuntimeMaxSec(env = process.env) {
+  const ms = maxRuntimeMs(env);
+  return ms > 0 ? Math.ceil(ms / 1000) : null;
+}
 import { readLastRun, newerThan, defaultLastRunFile } from "./run-result.js";
 
 const DEFAULT_FUNCTIONS_DIR = path.join(
@@ -336,7 +345,7 @@ const SYSTEMD_RUN_BIN = process.env.DUDE_SYSTEMD_RUN || "systemd-run";
  * { ok: false, error } if spawning fails or systemd-run rejects the
  * unit (caller falls back to the synchronous path).
  */
-export function spawnDetachedAgent({ args, spawnFn, unit }) {
+export function spawnDetachedAgent({ args, spawnFn, unit, runtimeMaxSec = defaultRuntimeMaxSec() }) {
   const setenv = Object.entries(process.env)
     .filter(([k, v]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && v != null)
     .map(([k, v]) => `--setenv=${k}=${v}`);
@@ -344,6 +353,11 @@ export function spawnDetachedAgent({ args, spawnFn, unit }) {
     "--user", "--collect", "--quiet",
     `--unit=${unit}`,
     `--description=dude-agent wait-fired run (${unit})`,
+    // wall-clock kill for the transient unit (incident 2026-09-24: a
+    // wait-fired run held the agent lock for 13h). belt-and-suspenders
+    // with the in-agent runtime cap — systemd kills the whole cgroup,
+    // including any browser children the run left behind. null/0 disables.
+    ...(runtimeMaxSec ? [`--runtime-maxsec=${runtimeMaxSec}`] : []),
     ...setenv,
     process.execPath, // interpreter
     ...args,          // agent entry + flags — was previously DROPPED, so
