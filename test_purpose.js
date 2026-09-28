@@ -34,6 +34,25 @@ test("loadPurpose loads the meal-planner purpose", async () => {
   );
 });
 
+test("meal-planner state lives in the recipes vault, not a vps state dir", async () => {
+  const skill = fs.readFileSync(".pi/skills/meal-planner/SKILL.md", "utf8");
+  const prompt = (await loadPurpose("meal-planner")).prompt;
+  // no references to the old internal state dir anywhere in the purpose
+  assert.ok(!prompt.includes("~/.config/dude/meal-planner"),
+    "purpose prompt must not point at the vps state dir");
+  assert.ok(!skill.includes("pantry.json"),
+    "skill must not reference pantry.json (replaced by inventory.md)");
+  assert.ok(!skill.includes("history.jsonl"),
+    "skill must not reference history.jsonl (replaced by state/history.md)");
+  assert.ok(!skill.includes("prefs.json"),
+    "skill must not reference prefs.json (replaced by state/prefs.md)");
+  // obsidian-only state files must be named as the source of truth
+  assert.ok(skill.includes("inventory.md"), "inventory.md is the on-hand truth");
+  assert.ok(skill.includes("state/history.md"));
+  assert.ok(skill.includes("state/prefs.md"));
+  assert.ok(skill.includes("state/lastPlan.json"));
+});
+
 test("loadPurpose throws for unknown purpose", async () => {
   await assert.rejects(() => loadPurpose("does-not-exist"), /unknown purpose/);
 });
