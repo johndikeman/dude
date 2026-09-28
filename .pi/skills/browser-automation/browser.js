@@ -8,6 +8,7 @@
 //   browser.js snapshot                        indexed interactive-element dump
 //   browser.js click <ref|selector>
 //   browser.js clickxy <x> <y>                 raw coordinate click (captchas)
+//   browser.js holdxy <x> <y> [ms]              press-and-hold at coordinates (default 5s, with jitter)
 //   browser.js type <ref|selector> <text> [--no-clear]
 //   browser.js press <key>                     e.g. Enter, Tab, Escape
 //   browser.js select <ref|selector> <value|label>
@@ -90,6 +91,9 @@ async function main() {
         break;
       case "clickxy":
         out = await callDaemon("clickxy", [argList[0], argList[1]]);
+        break;
+      case "holdxy":
+        out = await callDaemon("holdxy", [argList[0], argList[1], argList[2] || 5000]);
         break;
       case "type": {
         const noClear = args.includes("--no-clear");

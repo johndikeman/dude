@@ -45,6 +45,7 @@ $BROWSER click 3        # advances to form step 2 — snapshot again to see it
 | `snapshot` | page text + numbered interactive elements |
 | `click <ref\|selector>` | click element |
 | `clickxy <x> <y>` | raw coordinate click (use for canvas/captcha widgets) |
+| `holdxy <x> <y> [ms]` | press-and-hold at raw coordinates (default 5s, with jitter) — for press-and-hold checkpoints where a plain click doesn't register |
 | `type <ref> "<text>" [--no-clear]` | clear field then type |
 | `press <key>` | Enter / Tab / Escape / ArrowDown ... |
 | `select <ref> "<value or label>"` | dropdown option |
@@ -62,6 +63,7 @@ $BROWSER click 3        # advances to form step 2 — snapshot again to see it
 3. captchas: take a `screenshot`, read the image, then use `clickxy` /
    `type` / `press` to solve it. for checkbox-style ("i am human") widgets,
    try a simple `click` first — many are trivially passable in a real browser.
+   for press-and-hold checkpoints (e.g. perimeterx), use `holdxy`.
 4. if an element isn't in the snapshot, find it with `eval`
    (e.g. `document.querySelector(...)`), or act via css selector instead of ref.
 5. always `$BROWSER stop` when finished so the chromium process is cleaned up.
