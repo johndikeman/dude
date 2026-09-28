@@ -146,7 +146,8 @@ function handleInterruptSignal(sig) {
         purpose: activePurpose,
       });
       try {
-        activeSession.appendCustomEntry(
+        appendSessionMarker(
+          activeSession,
           "interrupted",
           { reason: sig, ts: bc.ts, note: "session ended abnormally; see interrupted.json + resume oneshot" },
         );
@@ -224,6 +225,11 @@ client.on("messageCreate", async (message) => {
   try {
     await handleMessage(message);
   } catch (e) {
+    // a runCycle throw after the lock was acquired (model resolution,
+    // session creation, prompt build...) must not leak the agent lock —
+    // a leaked lock with an alive discord-service pid blocks every other
+    // trigger until the 6h age-stale takeover (seen 2026-09-28).
+    releaseLockAndStopCap();
     log(`error handling message ${message.id}: ${e?.stack || e?.message || e}`);
   }
 });
@@ -309,8 +315,11 @@ async function runCycle(message = null, sessionFileToResume = null) {
   const isOneShotRun = process.argv.includes("--once") || process.argv.includes("--cron") || process.argv.includes("--run");
   if (isOneShotRun) {
     acquireLockOrExit({ log });
-  } else if (!acquireLock({ log })) {
-    log("runCycle: another agent run is in progress; skipping this trigger.");
+  } else if (!acquireLock()) {
+    const holder = readLock();
+    log(
+      `runCycle: another agent run is in progress (pid ${holder?.pid ?? "?"}, started ${holder?.startedAt ?? "?"}${holder?.purpose ? `, purpose ${holder.purpose}` : ""}); skipping this trigger.`,
+    );
     isRunning = false;
     return;
   }
@@ -692,12 +701,18 @@ const isOneShot =
 
 if (isOneShot) {
   log("Starting one-off scheduled agent cycle...");
-  runCycle();
+  runCycle().catch((e) => {
+    releaseLockAndStopCap();
+    log(`runCycle: failed: ${e?.stack || e?.message || e}`);
+  });
 } else if (process.env.DISCORD_TOKEN) {
   client.login(process.env.DISCORD_TOKEN);
 } else {
   log(
     "No DISCORD_TOKEN provided and --once not specified. Running single cycle...",
   );
-  runCycle();
+  runCycle().catch((e) => {
+    releaseLockAndStopCap();
+    log(`runCycle: failed: ${e?.stack || e?.message || e}`);
+  });
 }

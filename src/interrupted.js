@@ -36,6 +36,32 @@ export function userFunctionsDir() {
     );
 }
 
+/**
+ * append an `interrupted` custom entry to a pi session, across pi
+ * API versions. the session object's marker API has moved around:
+ *   - pi 0.84.x: session.appendEntry(customType, data)
+ *   - older/other builds: session.appendCustomEntry or
+ *     session.sessionManager.appendCustomEntry
+ * seen live 2026-09-28 (deploy restart during a discord-triggered run):
+ * "activeSession.appendCustomEntry is not a function" — non-fatal
+ * thanks to the caller's try/catch, but the session then had no
+ * interrupted marker. this tries every known spelling and throws only
+ * when none exist, so the caller can still log it.
+ */
+export function appendSessionMarker(session, customType, data) {
+  let lastErr;
+  if (typeof session.appendEntry === "function") {
+    try { return session.appendEntry(customType, data); } catch (err) { lastErr = err; }
+  }
+  if (typeof session.appendCustomEntry === "function") {
+    try { return session.appendCustomEntry(customType, data); } catch (err) { lastErr = err; }
+  }
+  if (typeof session.sessionManager?.appendCustomEntry === "function") {
+    try { return session.sessionManager.appendCustomEntry(customType, data); } catch (err) { lastErr = err; }
+  }
+  throw lastErr || new Error(`no custom-entry append API on pi session (tried appendEntry/appendCustomEntry/sessionManager)`);
+}
+
 /** write the interrupted breadcrumb. returns the breadcrumb object. */
 export function writeBreadcrumb({ reason, sessionFile, purpose = null, configDir } = {}) {
   const file = breadcrumbFile(configDir);

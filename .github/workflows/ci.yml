@@ -34,6 +34,13 @@ jobs:
           git add flake.lock 
           git config --global user.email "dude@johnf.art"
           git config --global user.name "dude"
+          # when the lock is already current (e.g. the PR branch bumped it and
+          # CI ran again on the merge push), there's nothing to commit — exit
+          # cleanly instead of failing the whole run (seen 2026-09-28 #80/#81)
+          if git diff --cached --quiet; then
+            echo "flake.lock already current; nothing to update"
+            exit 0
+          fi
           git commit -m "chore: update dude to ${{github.sha}}" 
           gh auth setup-git
           git push origin update-dude-${{github.sha}}
