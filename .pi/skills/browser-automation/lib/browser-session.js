@@ -134,6 +134,12 @@ export async function runDaemon() {
       "--disable-dev-shm-usage",
       "--disable-gpu",
       "--window-size=1280,900",
+      // cloudflare/perimeterx fingerprint the UA for HeadlessChrome before
+      // issuing challenges — spoof a real chrome UA unless explicitly disabled
+      // (BROWSER_SPOOF_UA=0).
+      ...(process.env.BROWSER_SPOOF_UA !== "0"
+        ? ["--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"]
+        : []),
     ],
     defaultViewport: { width: 1280, height: 900 },
   });

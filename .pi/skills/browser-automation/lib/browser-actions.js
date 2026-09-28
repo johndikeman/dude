@@ -192,12 +192,29 @@ export async function evalJs(page, js) {
   return result === undefined ? "undefined" : JSON.stringify(result, null, 2);
 }
 
+// press-and-hold at raw coordinates, with small jitters while held.
+// needed for press-and-hold checkpoints (e.g. perimeterx widgets) where a
+// plain clickxy doesn't register.
+export async function holdXY(page, x, y, ms = 5000) {
+  await page.mouse.move(Number(x), Number(y));
+  await page.mouse.down();
+  await new Promise((r) => setTimeout(r, Number(ms)));
+  // tiny jitters while holding
+  for (let i = 0; i < 5; i++) {
+    await page.mouse.move(Number(x) + (i % 3) - 1, Number(y) + ((i + 1) % 3) - 1);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  await page.mouse.up();
+  return `held at (${x}, ${y}) for ${ms}ms`;
+}
+
 // dispatch table used by the daemon's HTTP API
 export const actions = {
   noop: async () => "ok",
   snapshot,
   click,
   clickxy: clickXY,
+  holdxy: holdXY,
   type: (page, sel, text, noClear) => type(page, sel, text, { clear: !noClear }),
   press,
   select: selectOption,

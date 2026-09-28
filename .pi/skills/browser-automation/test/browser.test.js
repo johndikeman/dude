@@ -108,6 +108,25 @@ before(async () => {
            </div>`,
         ),
       );
+    } else if (url.pathname === "/hold") {
+      // press-and-hold checkpoint: fires only on mousedown + ~1s hold, not on a click
+      res.end(
+        page(
+          "hold check",
+          `<div id="hbox" style="width:400px;height:200px;position:relative">
+             <button id="holdbtn" style="position:absolute;left:180px;top:80px;width:40px;height:40px"
+               onmousedown="startHold()" onmouseup="cancelHold()"
+               onmouseleave="cancelHold()">?</button>
+           </div>
+           <script>
+             let t;
+             function startHold() { t = setTimeout(() => { document.title = 'held'; }, 800); }
+             function cancelHold() { clearTimeout(t); }
+           </script>`,
+        ),
+      );
+    } else if (url.pathname === "/ua") {
+      res.end(page("ua check", `<pre id="ua">${""}</pre><script>document.getElementById('ua').textContent = navigator.userAgent</script>`));
     } else {
       res.statusCode = 404;
       res.end("nope");
@@ -173,6 +192,38 @@ test("coordinate click (captcha-style widget)", { skip: !haveChromium }, async (
   await run(CLI, ["clickxy", "200", "100"]);
   const out = await run(CLI, ["eval", "document.title"]);
   assert.equal(JSON.parse(out), "verified");
+});
+
+test("press-and-hold widget", { skip: !haveChromium }, async () => {
+  await run(CLI, ["goto", `${base}/hold`]);
+  // hold long enough to trip the 800ms hold detector
+  await run(CLI, ["holdxy", "200", "100", "1200"]);
+  const out = await run(CLI, ["eval", "document.title"]);
+  assert.equal(JSON.parse(out), "held");
+});
+
+test("UA spoof on by default, off with BROWSER_SPOOF_UA=0", { skip: !haveChromium }, async () => {
+  // session should already be running with the default (spoofed) UA
+  let out = await run(CLI, ["eval", "navigator.userAgent"]);
+  let ua = JSON.parse(out);
+  assert.ok(!/HeadlessChrome/.test(ua), `expected spoofed UA, got ${ua}`);
+  assert.match(ua, /Chrome\/151\.0\.0\.0/);
+
+  // relaunch fresh with spoof disabled
+  await run(CLI, ["stop"]);
+  process.env.BROWSER_SPOOF_UA = "0";
+  try {
+    await run(CLI, ["start", "--fresh"]);
+    await run(CLI, ["goto", `${base}/ua`]);
+    out = await run(CLI, ["eval", "navigator.userAgent"]);
+    ua = JSON.parse(out);
+    assert.match(ua, /HeadlessChrome/);
+  } finally {
+    process.env.BROWSER_SPOOF_UA = "";
+  }
+  // restore default spoofed session for later tests
+  await run(CLI, ["stop"]);
+  await run(CLI, ["start"]);
 });
 
 test("screenshot produces readable png", { skip: !haveChromium }, async () => {
