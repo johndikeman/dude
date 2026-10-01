@@ -16,6 +16,19 @@
  * path.
  */
 
+/**
+ * render the discord one-off message with author attribution so the agent
+ * knows who tagged it (e.g. john vs another server member).
+ * @param {{content:string, author?:{tag?:string, username?:string}|null}|null} message
+ */
+function renderDiscordMessage(message) {
+  if (!message) return "";
+  const who = message.author?.tag || message.author?.username;
+  return who
+    ? `\n you're being invoked as a one-off through discord by "${who}", user message is:\n${message.content}`
+    : `\n you're being invoked as a one-off through discord, user message is:\n${message.content}`;
+}
+
 const FULL_TEMPLATE = ({ paths, purpose, context, message, now }) => `You are a self-improving AI agent named "dude". your source code is contained in the github repository johndikeman/dude
 Current date: ${now.toLocaleString("en-US")}
 Your goal is to implement the tasks/goals laid out for you in ${paths.tasksFile}. 
@@ -41,7 +54,7 @@ Context:
 - Current working directory: ${paths.workingDir}
 ${purpose ? "\n## purpose: " + purpose.name + "\n" + purpose.prompt : ""}
 ${context ? "\n## wait-runner context (why you were invoked now)\n" + context : ""}
-${message ? "\n you're being invoked as a one-off through discord, user message is:\n" + message.content : ""}
+${renderDiscordMessage(message)}
 `;
 
 const TRIMMED_TEMPLATE = ({ paths, purpose, context, message, now }) => `You are dude, a coding agent (source code: github repository johndikeman/dude).
@@ -61,7 +74,7 @@ obsidian markdown tip: never wrap text in bare angle brackets (like <this>) in v
 ## purpose: ${purpose.name}
 ${purpose.prompt}
 ${context ? "\n## wait-runner context (why you were invoked now)\n" + context : ""}
-${message ? "\n you're being invoked as a one-off through discord, user message is:\n" + message.content : ""}
+${renderDiscordMessage(message)}
 `;
 
 /**

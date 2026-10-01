@@ -667,7 +667,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
     resumeInfo
       ? buildResumePrompt(resumeInfo)
       : sessionFileToResume && message
-        ? `current date: ${new Date().toLocaleString("en-US")}\n\nuser sent a follow-up via discord:\n${message.content}`
+        ? `current date: ${new Date().toLocaleString("en-US")}\n\nuser ${message.author?.tag || ""} sent a follow-up via discord:\n${message.content}`
         : prompt;
   log("runCycle: sending prompt to agent...");
   session.prompt(promptToSend).catch(async (e) => {
