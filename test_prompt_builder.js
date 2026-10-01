@@ -101,3 +101,25 @@ test("trimBasePrompt: wait-runner context still lands in the trimmed prompt", ()
   assert.ok(p.includes("## wait-runner context (why you were invoked now)"));
   assert.ok(p.includes("fired because x"));
 });
+
+test("discord message: author tag is included so the agent knows who tagged it", () => {
+  const msg = { content: "hey dude", author: { tag: "wife#1234", username: "wife" } };
+  const full = fullFor({ message: msg });
+  const trimmed = fullFor({ message: msg, purpose: { name: "demo", prompt: "p", trimBasePrompt: true } });
+  for (const p of [full, trimmed]) {
+    assert.ok(p.includes('discord by "wife#1234"'));
+    assert.ok(p.includes("hey dude"));
+  }
+});
+
+test("discord message: no author falls back to the old unattributed phrasing", () => {
+  const p = fullFor({ message: { content: "hi" } });
+  assert.ok(p.includes("invoked as a one-off through discord, user message is"));
+  assert.ok(p.includes("hi"));
+  assert.ok(!p.includes("discord by"));
+});
+
+test("discord message: null message renders nothing", () => {
+  const p = fullFor();
+  assert.ok(!p.includes("discord"));
+});
