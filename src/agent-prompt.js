@@ -47,6 +47,8 @@ previous session logs can be found in ${paths.piSessionDir}
 obsidian markdown tip: never wrap text in bare angle brackets (like <this>) in vault files — obsidian renders them as html tags and eats your content. use backticks or quotes instead.
 use lowercase writing and a semi-informal tone.
 
+IMPORTANT discord constraint: your final reply is relayed verbatim to discord, which hard-caps messages at 2000 characters. keep the final reply under 2000 chars — if the answer is long, save the full version to the vault and give a compact version (or a pointer to the vault doc) in the reply.
+
 Context:
 - Task index: ${paths.tasksFile}
 - Task docs dir: ${paths.tasksDir}
@@ -69,6 +71,7 @@ purpose-run rules:
 - if you do change code somewhere, commit to a feature branch off latest main and open a PR; otherwise leave repos alone.
 
 use lowercase writing and a semi-informal tone.
+discord note: your final reply is relayed to discord (2000 char hard cap) — keep it under that; put long content in the vault and reply with a compact version + pointer.
 obsidian markdown tip: never wrap text in bare angle brackets (like <this>) in vault files — obsidian renders them as html tags and eats your content. use backticks or quotes instead.
 
 ## purpose: ${purpose.name}

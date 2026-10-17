@@ -121,5 +121,8 @@ test("discord message: no author falls back to the old unattributed phrasing", (
 
 test("discord message: null message renders nothing", () => {
   const p = fullFor();
-  assert.ok(!p.includes("discord"));
+  // the boilerplate prompt legitimately mentions discord (2000-char cap note);
+  // what must never appear is a rendered one-off message block
+  assert.ok(!p.includes("invoked as a one-off through discord"));
+  assert.ok(!p.includes("user message is"));
 });
