@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import stripAnsi from "strip-ansi";
 import { startTypingLoop } from "./typing.js";
+import { setAgentStatus, clearAgentStatus } from "./status.js";
 import {
   MAX_EMPTY_RESPONSE_RETRIES,
   nudgePrompt,
@@ -117,6 +118,8 @@ function releaseLockAndStopCap() {
     try { stopRuntimeCap(); } catch { /* nothing */ }
     stopRuntimeCap = null;
   }
+  // clear the discord presence so john can tell at a glance the run is over
+  clearAgentStatus(client, log);
   releaseLock();
 }
 
@@ -326,6 +329,9 @@ async function runCycle(message = null, sessionFileToResume = null) {
   log(
     `runCycle: starting (${message ? "discord-triggered" : "scheduled"})${sessionFileToResume ? " [resumed]" : ""}`,
   );
+  // show a presence in discord while the run is active so john can tell
+  // at a glance a session is running (cleared by releaseLockAndStopCap)
+  setAgentStatus(client, log);
 
   // keep a "typing..." indicator visible in the channel for the whole run
   const stopTyping = message ? startTypingLoop(message.channel, { log }) : null;
