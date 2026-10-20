@@ -33,6 +33,7 @@ import {
   clearBreadcrumb,
   writeResumeOneShot,
   buildResumePrompt,
+  appendSessionMarker,
 } from "./interrupted.js";
 import { writeRunResult } from "./run-result.js";
 import { createRequire } from "module";

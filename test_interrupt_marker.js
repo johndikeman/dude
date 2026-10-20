@@ -2,6 +2,7 @@
 // spellings in order and falls across versions instead of failing hard.
 import { appendSessionMarker } from "./src/interrupted.js";
 import assert from "assert";
+import fs from "node:fs";
 
 // spelling 1: appendEntry (pi 0.84.x)
 {
@@ -41,6 +42,18 @@ import assert from "assert";
   };
   appendSessionMarker(session, "interrupted", { y: 3 });
   assert.deepStrictEqual(calls, [["interrupted", { y: 3 }]]);
+}
+
+// regression guard: index.js must actually import appendSessionMarker —
+// it was called in the SIGTERM handler but never imported, so the session
+// marker silently failed with "appendSessionMarker is not defined"
+// (agent.log 2026-10-20T13:02:12Z).
+{
+  const src = fs.readFileSync("src/index.js", "utf8");
+  assert.ok(
+    src.includes("appendSessionMarker,"),
+    "index.js must import appendSessionMarker from ./interrupted.js",
+  );
 }
 
 console.log("test_interrupt_marker.js: all ok");
