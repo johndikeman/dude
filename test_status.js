@@ -3,6 +3,7 @@ import assert from "node:assert";
 import {
   setAgentStatus,
   clearAgentStatus,
+  attachStatusReady,
   AGENT_ACTIVITY,
 } from "./src/status.js";
 
@@ -21,8 +22,15 @@ function test(name, fn) {
 
 function mockClient() {
   const calls = [];
+  const handlers = {};
   return {
     user: { setActivity: (...args) => calls.push(args) },
+    once: (ev, fn) => {
+      (handlers[ev] ||= []).push(fn);
+    },
+    emit: (ev) => {
+      for (const fn of handlers[ev] || []) fn();
+    },
     calls,
   };
 }
@@ -37,15 +45,15 @@ await Promise.all([
     assert.strictEqual(opts.type, 0, "presence type must be 0 (Playing)");
   }),
 
-  test("setAgentStatus no-ops safely when the client is not ready", async () => {
+  test("setAgentStatus queues the presence when the client is not ready", async () => {
     const logs = [];
     // must not throw for null/undefined client
     setAgentStatus(null, (m) => logs.push(m));
     setAgentStatus(undefined, (m) => logs.push(m));
     setAgentStatus({}, (m) => logs.push(m)); // logged-in client has no .user
     assert.ok(
-      logs.some((m) => /skipping presence update/.test(m)),
-      "expected a skip message in the log",
+      logs.some((m) => /presence queued/.test(m)),
+      "expected a queued message in the log",
     );
   }),
 
@@ -78,6 +86,39 @@ await Promise.all([
     clearAgentStatus({}, () => {});
   }),
 ]);
+
+await Promise.all(results);
+
+// state-dependent tests (module-level presenceWanted), run sequentially.
+// reset first: the tests above left the flag in some state.
+await test("queued presence is applied once the gateway reaches ready", async () => {
+  clearAgentStatus(mockClient(), () => {}); // reset module state
+  const notReady = {}; // client without .user (login still in flight)
+  setAgentStatus(notReady, () => {});
+  const client = mockClient();
+  attachStatusReady(client, () => {});
+  client.emit("clientReady");
+  assert.strictEqual(client.calls.length, 1, "setActivity must be applied on ready");
+  assert.strictEqual(client.calls[0][0], AGENT_ACTIVITY);
+});
+
+await test("clearAgentStatus before ready cancels the queued presence", async () => {
+  const notReady = {};
+  setAgentStatus(notReady, () => {}); // queue it
+  clearAgentStatus(notReady, () => {}); // run ended before login resolved
+  const client = mockClient();
+  attachStatusReady(client, () => {});
+  client.emit("clientReady");
+  assert.strictEqual(client.calls.length, 0, "no presence must be applied after clear");
+});
+
+await test("attachStatusReady is a no-op when nothing was queued", async () => {
+  clearAgentStatus(mockClient(), () => {}); // ensure flag is false
+  const client = mockClient();
+  attachStatusReady(client, () => {});
+  client.emit("clientReady");
+  assert.strictEqual(client.calls.length, 0);
+});
 
 await Promise.all(results);
 console.log(`\n${results.length} status tests finished`);

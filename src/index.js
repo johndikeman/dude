@@ -5,7 +5,11 @@ import fs from "fs";
 import path from "path";
 import stripAnsi from "strip-ansi";
 import { startTypingLoop } from "./typing.js";
-import { setAgentStatus, clearAgentStatus } from "./status.js";
+import {
+  setAgentStatus,
+  clearAgentStatus,
+  attachStatusReady,
+} from "./status.js";
 import {
   MAX_EMPTY_RESPONSE_RETRIES,
   nudgePrompt,
@@ -218,6 +222,10 @@ function cleanupOldDiscordSessionEntries(map, maxAgeDays = 30) {
   }
   return cleaned;
 }
+
+// runCycle can start before the gateway is up (watcher/scheduled triggers
+// fire right after client.login()), so queued presence updates get applied here
+attachStatusReady(client, log);
 
 client.once("ready", async () => {
   log(`Logged in as ${client.user.tag}!`);
