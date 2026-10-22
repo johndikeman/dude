@@ -50,6 +50,16 @@ test("full prompt encodes the task-index/task-doc/ops-log split", () => {
   assert.ok(p.includes(`- Ops log (capped): ${PATHS.agentLogFile}`));
 });
 
+test("full prompt encodes the imperative-first debugging rule and imperative-state hint", () => {
+  const p = buildAgentPrompt({ paths: PATHS, now: NOW });
+  // imperative-first debugging rule (self-audit round 2 improvement 3)
+  assert.ok(p.includes("when a debugging loop spans 2+ sessions, stop running it through agent cycles"));
+  assert.ok(p.includes("do the imperative version first (shell, curl, rebuild, funnel)"));
+  // imperative-state tracking hint folded into the summary section (improvement 2)
+  assert.ok(p.includes("include imperative state (deployed store paths, service env, live URLs, keys in play)"));
+  assert.ok(p.includes("so future runs don't rediscover it"));
+});
+
 test("purpose without trimBasePrompt keeps the full prompt and appends the purpose block", () => {
   const purpose = { name: "demo", prompt: "do the demo thing" };
   const p = fullFor({ purpose });
