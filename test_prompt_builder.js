@@ -35,6 +35,13 @@ test("full prompt encodes the task-index/task-doc/ops-log split", () => {
   // task docs carry instructions, design log and feedback
   assert.ok(p.includes("leave a note to myself and your future self runs in the task doc"));
   assert.ok(p.includes("log the actions you take and general design there as well"));
+  // standard task-doc template is baked in
+  assert.ok(p.includes("## objective / origin"));
+  assert.ok(p.includes("## current state / summary"));
+  assert.ok(p.includes("## feedback (john)"));
+  assert.ok(p.includes("## log / history"));
+  assert.ok(p.includes("refresh the summary line and append new work to log / history"));
+  assert.ok(p.includes("never restructure away from these headings"));
   // non-task ops logging has a home outside the task file
   assert.ok(p.includes(`non-task ops logging). this is not a style preference`));
   // paths block exposes all three locations
