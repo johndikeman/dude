@@ -24,6 +24,11 @@ import {
 } from "./loop-detect.js";
 import { pathToFileURL } from "url";
 import { loadPurpose, parsePurposeArgs } from "./purpose.js";
+import {
+  sendNotify,
+  startedMessage,
+  finishedMessage,
+} from "./notify.js";
 import { acquireLock, acquireLockOrExit, releaseLock } from "./agent-lock.js";
 import { startRuntimeCap, maxRuntimeMs } from "./runtime-cap.js";
 import { buildAgentPrompt } from "./agent-prompt.js";
@@ -246,6 +251,47 @@ client.on("messageCreate", async (message) => {
   }
 });
 
+/**
+ * non-discord runs (scheduled cron + wait-fired --once, incl. purposes)
+ * used to be totally silent on discord — john asked to ping there when
+ * such a run starts and finishes. both helpers are fire-and-forget: a
+ * discord hiccup must never delay or crash the run (see notify.js).
+ */
+async function notifyRunStart({ trigger, purpose, context }) {
+  try {
+    await sendNotify({
+      existingClient: client,
+      content: startedMessage({ trigger, purpose, context }),
+      paths: getPaths(),
+      log,
+    });
+  } catch (e) {
+    log(`notify: start ping failed: ${e?.message || e}`);
+  }
+}
+
+async function notifyRunFinish({ outcome, summary, err, sessionFile }) {
+  try {
+    const msg = await sendNotify({
+      existingClient: client,
+      content: finishedMessage({ outcome, summary, err, sessionFile }),
+      paths: getPaths(),
+      log,
+    });
+    // map the message so john can reply-to it to continue the session
+    if (msg?.id && sessionFile) {
+      const map = loadDiscordSessionMap();
+      map[msg.id] = {
+        sessionFile,
+        timestamp: new Date().toISOString(),
+      };
+      saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
+    }
+  } catch (e) {
+    log(`notify: finish ping failed: ${e?.message || e}`);
+  }
+}
+
 /** this triggers a one-off run of the agent, separate from the periodic cron job
  * 
  @param {OmitPartialGroupDMChannel<Message<boolean>>} message - the discord message that triggered the agent run */
@@ -388,6 +434,17 @@ async function runCycle(message = null, sessionFileToResume = null) {
   // loads a purpose-specific prompt + skills for special-purpose runs
   // (e.g. prediction-markets). the discord/watch path never passes --purpose.
   const { purpose: purposeName, context } = parsePurposeArgs(process.argv);
+
+  // john: ping discord when a NON-discord-triggered run starts + finishes
+  // (scheduled cron + wait-fired --once runs used to be silent there).
+  if (!message) {
+    void notifyRunStart({
+      trigger: purposeName ? `purpose ${purposeName}` : "scheduled run",
+      purpose: purposeName,
+      context,
+    });
+  }
+
   let purpose = null;
   if (purposeName) {
     purpose = await loadPurpose(purposeName);
@@ -565,6 +622,15 @@ async function runCycle(message = null, sessionFileToResume = null) {
               };
               saveDiscordSessionMap(cleanupOldDiscordSessionEntries(map));
             }
+          } else {
+            void notifyRunFinish({
+              outcome: "loop-abort",
+              summary: loopAbortSummary(
+                loopSignature ?? "(unknown)",
+                loopRepeats || LOOP_THRESHOLD,
+              ),
+              sessionFile: session.sessionFile,
+            });
           }
           break;
         }
@@ -642,6 +708,16 @@ async function runCycle(message = null, sessionFileToResume = null) {
               );
             }
           }
+        } else {
+          // non-discord run: ping discord with the run outcome (summary
+          // stays short — finishedMessage truncates). the session-file
+          // mapping lets john reply-to the ping to continue the session.
+          void notifyRunFinish({
+            outcome: lastRunHitQuotaLimit ? "failed" : "ok",
+            summary: lastAssistantMessage || undefined,
+            err: err || undefined,
+            sessionFile: session.sessionFile,
+          });
         }
         break;
       }
@@ -672,6 +748,12 @@ async function runCycle(message = null, sessionFileToResume = null) {
               `saved session mapping: reply ${reply.id} -> ${session.sessionFile}`,
             );
           }
+        } else {
+          void notifyRunFinish({
+            outcome: "failed",
+            err: event.finalError,
+            sessionFile: session.sessionFile,
+          });
         }
         break;
     }
@@ -705,6 +787,12 @@ async function runCycle(message = null, sessionFileToResume = null) {
           `saved session mapping: reply ${reply.id} -> ${session.sessionFile}`,
         );
       }
+    } else {
+      void notifyRunFinish({
+        outcome: "failed",
+        err: e?.message || e,
+        sessionFile: session?.sessionFile,
+      });
     }
   });
 }
@@ -719,6 +807,13 @@ if (isOneShot) {
   runCycle().catch((e) => {
     releaseLockAndStopCap();
     log(`runCycle: failed: ${e?.stack || e?.message || e}`);
+    // one-shot runs are non-discord-triggered: john asked for a discord
+    // ping on start + finish, so a setup throw (before the session exists
+    // and the session-event finish pings can fire) must surface here too.
+    void notifyRunFinish({
+      outcome: "failed",
+      err: e?.message || e,
+    });
   });
 } else if (process.env.DISCORD_TOKEN) {
   client.login(process.env.DISCORD_TOKEN);
