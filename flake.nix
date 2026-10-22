@@ -156,11 +156,28 @@
               AUTH_TOKEN_FILE="${config.home.homeDirectory}/.config/obsidian-headless/auth_token"
               rm -f "$AUTH_TOKEN_FILE"
 
-              exec ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
-                ${pkgs.bash}/bin/bash -c '
-                  ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob login \
-                    --email="$OB_EMAIL" --password="$OB_PASSWORD"
-                '
+              # transient obsidian server errors (e.g. HTTP 504) can fail the
+              # login and blow up the deploy health check. retry a few times
+              # with backoff to ride out the transiency.
+              attempt=1
+              max_attempts=5
+              while [ "$attempt" -le "$max_attempts" ]; do
+                ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
+                  ${pkgs.bash}/bin/bash -c '
+                    ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob login \
+                      --email="$OB_EMAIL" --password="$OB_PASSWORD"
+                  '
+                status=$?
+                if [ "$status" -eq 0 ]; then
+                  exit 0
+                fi
+                if [ "$attempt" -lt "$max_attempts" ]; then
+                  echo "ob login attempt $attempt failed (exit $status), retrying in 15s..." >&2
+                  sleep 15
+                fi
+                attempt=$((attempt + 1))
+              done
+              exit "$status"
             '';
           in
           {
