@@ -633,6 +633,11 @@
                       ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync --continuous --path ${cfg.obsidianSync.vaultPath}";
                       Restart = "always";
                       RestartSec = "10s";
+                      # forces a token refresh via ExecStartPre even when
+                      # obsidian-headless would otherwise loop forever on a
+                      # stale auth token (missing RuntimeMaxSec caused the
+                      # 9/28 deploy rollback saga — resilience test guards it)
+                      RuntimeMaxSec = cfg.obsidianSync.runtimeMaxSec;
                       Environment = [
                         "PATH=${
                           lib.makeBinPath [

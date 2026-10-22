@@ -30,6 +30,7 @@ repos:
 | `loop-detect.js` | tool-loop breaker: same tool+args repeated → steer nudge → abort session. (born from an 813× identical bash call on 2026-08-31.) |
 | `empty-response-retry.js` | glm-5.3-flash sometimes settles with zero output; nudge the session up to N times before ending the run. |
 | `typing.js` | discord "typing…" keepalive during runs. |
+| `notify.js` | discord start/finish pings for NON-discord-triggered runs (scheduled cron + wait-fired --once, incl. purposes). channel = `DUDE_NOTIFY_CHANNEL_ID` env falling back to `config.json` `lastChannelId`; reuses the service client when logged in, else lazily logins with a throwaway minimal client (15s timeouts, best-effort — never delays/crashes a run). finish pings map `discord-message-sessions.json` so john can reply-to continue the session. |
 | `purpose.js` | registry loader: `src/purposes/<name>.js` → `--purpose <name>`. unknown purpose = loud error. |
 | `agent-prompt.js` | builds the system prompt. full template (task processing) vs trimmed template (`trimBasePrompt: true` — purpose runs must not triage the task file; that's deliberate, task-file edits by purposes re-trigger the wait runner). |
 
@@ -47,7 +48,8 @@ purposes (`src/purposes/`): `prediction-markets.js` (LLM half of pm agent),
 4. during the run: loop breaker + empty-response nudges watch the event
    stream; the runtime cap watches the clock.
 5. `agent_settled` → release lock + disarm cap → discord summary (if
-   discord-triggered) → exit. every exit writes `last-run.json`.
+   discord-triggered) or a start/finish ping via `notify.js` (if
+   non-discord-triggered) → exit. every exit writes `last-run.json`.
 
 lock rules to remember:
 - a leaked lock with an ALIVE pid (e.g. the discord service) blocks all
