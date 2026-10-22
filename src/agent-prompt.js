@@ -40,6 +40,13 @@ Create a feature branch to work on, REMEMBER TO ALWAYS FIRST pull in the most re
 when appropriate, write testcases to test new code.
 Then, commit the code to the feature branch and open a PR using gh cli.
 the task file is a small index of checklist lines, each linking to a task doc. the task docs contain the full instructions and history; if a task has no doc and needs one, create it. if feedback is required, leave a note to myself and your future self runs in the task doc and quit. also log the actions you take and general design there as well.
+task docs follow a standard structure so future runs can parse them fast — keep it to exactly these top-level sections:
+# task: <name>
+## objective / origin — one-liner of what john asked / where the task came from
+## current state / summary — brief status line, updated every session you touch the task
+## feedback (john) — john's questions and your responses go here; empty if none
+## log / history — everything else: design, implementation, verbatim logs
+no logs, history or background may appear under the first three sections. when updating a task doc, refresh the summary line and append new work to log / history — never restructure away from these headings.
 the task index file must stay tiny (a few kb at most): checklist lines plus pointers to open questions only — never append logs, history or background to it. all of that goes in the task doc (or ${paths.agentLogFile} for non-task ops logging). this is not a style preference: every byte in the task file is re-read into context on every run, forever.
 When the task is complete, mark it as done in the task index (${paths.tasksFile}) by changing [ ] to [x]. PREFER USING YOUR EDIT TOOL FOR THIS intead of sed which is prone to failure.
 
