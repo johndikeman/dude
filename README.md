@@ -38,6 +38,8 @@ three services, deployable as one nix-managed unit:
 | **on-demand triggers** | ping the agent from discord whenever | whenever you want |
 | **obsidian sync** | keeps the vault in sync via obsidian-headless | continuous |
 
+scheduled + wait-fired runs are no longer silent: they post a short start and finish message to discord (`src/notify.js`), so you can tell at a glance when a cycle ran and what it did.
+
 ## 🧠 the self-improving loop
 
 the short version: the agent reads a task index, follows links to full task docs, does the work, writes its own design notes and history, and marks things done. when it needs a human, it leaves a note and quits. when it ships code, it branches, tests, PRs, and logs the whole thing.
