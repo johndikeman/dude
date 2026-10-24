@@ -78,11 +78,10 @@ OUT="$(bash "$SCRIPT" --dir "$TARGET" --manifest "$TMP/plan.txt" --budget 1 --dr
 assert_contains "a planned first" "$OUT" "would download: a.zim"
 assert_contains "b skipped over budget" "$OUT" "skip (over budget): b.zim"
 assert_contains "c planned (no size)" "$OUT" "would download: c.zim"
-check "manifest copied to target" test -f "$TARGET/iiab-content/MANIFEST"
-check "nothing downloaded in dry-run" test ! -f "$TARGET/iiab-content/a.zim"
+check "nothing written in dry-run" test ! -e "$TARGET/iiab-content"
 
 # rerun with a.zim already in place -> skipped
-touch "$TARGET/iiab-content/a.zim"
+mkdir -p "$TARGET/iiab-content"; touch "$TARGET/iiab-content/a.zim"
 OUT2="$(bash "$SCRIPT" --dir "$TARGET" --manifest "$TMP/plan.txt" --dry-run 2>&1)"
 assert_contains "present file skipped" "$OUT2" "skip (already present): a.zim"
 
@@ -94,7 +93,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -sIL)
       shift 2
-      printf 'HTTP/2 200\r\ncontent-length: 104857600\r\n\r\n'
+      printf 'HTTP/2 200\r\ncontent-length: 1048576\r\n\r\n'
       exit 0 ;;
     -fL) shift ;;
     -C) shift 2 ;;
@@ -103,13 +102,13 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
-head -c 104857600 /dev/zero > "$out"
+head -c 1048576 /dev/zero > "$out"
 EOF
 chmod +x "$SHIM/curl"
 T2="$TMP/target2"; mkdir -p "$T2"
 PATH="$SHIM:/usr/bin:/bin" bash "$SCRIPT" --dir "$T2" --manifest "$TMP/plan.txt" >/dev/null 2>&1
 check "download lands in iiab-content" test -f "$T2/iiab-content/a.zim"
-check "download is full size" test "$(stat -c %s "$T2/iiab-content/a.zim")" = 104857600
+check "download is full size" test "$(stat -c %s "$T2/iiab-content/a.zim")" = 1048576
 check "staging cleaned up" test ! -e "$T2/.iiab-staging"
 
 # truncated download must die
@@ -117,7 +116,7 @@ cat > "$SHIM/curl" <<'EOF'
 #!/usr/bin/env bash
 while [ $# -gt 0 ]; do
   case "$1" in
-    -sIL) shift 2; printf 'HTTP/2 200\r\ncontent-length: 104857600\r\n\r\n'; exit 0 ;;
+    -sIL) shift 2; printf 'HTTP/2 200\r\ncontent-length: 1048576\r\n\r\n'; exit 0 ;;
     -fL) shift ;;
     -C) shift 2 ;;
     -o) out="$2"; shift 2 ;;
@@ -125,11 +124,70 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
-head -c 10485760 /dev/zero > "$out"   # 10% of expected
+head -c 104857 /dev/zero > "$out"   # 10% of expected
 EOF
 chmod +x "$SHIM/curl"
 T3="$TMP/target3"; mkdir -p "$T3"
 check_ne "truncated download fails" env PATH="$SHIM:/usr/bin:/bin" bash "$SCRIPT" --dir "$T3" --manifest "$TMP/plan.txt"
+
+# --- format step -------------------------------------------------------------
+# fake mkfs: records invocations, must exist for command -v via PATH shim
+cat > "$SHIM/mkfs.ext4" <<'EOF'
+#!/usr/bin/env bash
+echo "mkfs.ext4 $*" >> "${MKFS_LOG:-/tmp/iiab-mkfs-unknown.log}"
+exit 0
+EOF
+chmod +x "$SHIM/mkfs.ext4"
+cat > "$SHIM/mount" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$SHIM/mount"
+# fake lsblk that knows a whole device (partition table + mountpoint query)
+# arg-aware lsblk shim: disk enumeration + per-device column queries
+cat > "$SHIM/lsblk" <<'EOF'
+#!/usr/bin/env bash
+shift 1 # drop -dn
+[ "$1" = "-o" ] && shift
+[ -n "${1:-}" ] || { echo "sdb   1  32G disk"; exit 0; } # device enum
+[ -n "${2:-}" ] || exit 0                                # no device arg
+asked="$1"; dev="$2"
+# the fake device has one partition, unmounted
+if [ "$asked" = "RM" ]; then echo 1
+elif [ "$asked" = "SIZE" ]; then echo "32G"
+elif [ "$asked" = "NAME,TYPE" ]; then echo "sdb1 part"
+elif [ "$asked" = "MOUNTPOINT" ]; then echo ""
+else echo "sdb1 part"
+fi
+EOF
+chmod +x "$SHIM/lsblk"
+export MKFS_LOG="$TMP/mkfs.log"
+# non-interactive (no tty) + no --yes -> confirm() fails -> must abort before mkfs runs
+check_ne "--format refuses without --yes" \
+  env PATH="$SHIM:/usr/bin:/bin" bash "$SCRIPT" --device /dev/sdb --format --manifest "$TMP/plan.txt"
+check_ne "refusal happens before mkfs" test -s "$TMP/mkfs.log"
+# run format_drive directly (function-level) with --yes, fake mkfs/mount via PATH
+run_format() { # run_format <fs>
+  PATH="$SHIM:/usr/bin:/bin" FORMAT_FS="${1:-ext4}" DUDE_SCRIPT="$SCRIPT" \
+    bash -c 'source "$DUDE_SCRIPT"; DRY_RUN=0; YES=1; format_drive /dev/sdb'
+}
+OUT3="$(run_format ext4 2>&1)" || { echo "$OUT3"; exit 1; }
+check "mkfs invoked with -F on the device" grep -q 'mkfs.ext4 -F /dev/sdb' "$TMP/mkfs.log"
+assert_contains "format logged" "$OUT3" "formatted /dev/sdb (ext4)"
+# --format vfat honored
+cat > "$SHIM/mkfs.vfat" <<'EOF'
+#!/usr/bin/env bash
+echo "mkfs.vfat $*" >> "${MKFS_LOG:-/tmp/iiab-mkfs-unknown.log}"
+exit 0
+EOF
+chmod +x "$SHIM/mkfs.vfat"
+OUT4="$(run_format vfat 2>&1)" || { echo "$OUT4"; exit 1; }
+check "mkfs.vfat used when filesystem specified" grep -q 'mkfs.vfat -F /dev/sdb' "$TMP/mkfs.log"
+# dry-run: plan mentions formatting, no mkfs call
+BEFORE="$(wc -l < "$TMP/mkfs.log")"
+OUT5="$(env PATH="$SHIM:/usr/bin:/bin" bash "$SCRIPT" --device /dev/sdb --format --manifest "$TMP/plan.txt" --dry-run 2>&1)"
+assert_contains "dry-run announces format" "$OUT5" "would format /dev/sdb as ext4"
+check "dry-run does not run mkfs" test "$(wc -l < "$TMP/mkfs.log")" = "$BEFORE"
 
 rm -rf "$TMP"
 echo "---- $pass passed, $fail failed"

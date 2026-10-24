@@ -10,10 +10,13 @@
 #   ./iiab-usb-download.sh                     # auto-detect a usb drive, ask to confirm
 #   ./iiab-usb-download.sh --device /dev/sdb   # explicit device (gets mounted)
 #   ./iiab-usb-download.sh --dir /media/usb    # use an already-mounted dir, no mount needed
+#   ./iiab-usb-download.sh --device /dev/sdb --format   # wipe + reformat first (ext4)
+#   ./iiab-usb-download.sh --device /dev/sdb --format vfat  # pick a filesystem
 #   ./iiab-usb-download.sh --budget 32 --yes
 #
 # flags:
 #   --device PATH    block device to mount (refuses non-removable disks)
+#   --format [FS]    erase the device and format it before mounting (default: ext4)
 #   --dir PATH       already-mounted directory to target instead
 #   --budget GB      total content budget in gb (default: 30)
 #   --manifest FILE  custom manifest (default: bundled manifest next to script)
@@ -89,7 +92,7 @@ remote_size_mb() {
 print_usage() { grep '^#   ' "$SCRIPT_DIR/iiab-usb-download.sh" | head -14; }
 
 main() {
-  DEVICE=""; DIR=""; BUDGET_GB="$DEFAULT_BUDGET_GB"; MANIFEST="$DEFAULT_MANIFEST"
+  DEVICE=""; DIR=""; BUDGET_GB="$DEFAULT_BUDGET_GB"; MANIFEST="$DEFAULT_MANIFEST"; FORMAT_FS=""
   YES="${IIAB_YES:-0}"; DRY_RUN=0
   STAGING=""
   TARGET=""
@@ -97,6 +100,9 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --device)  DEVICE="$2"; shift 2 ;;
+      --format)
+        FORMAT_FS=ext4; shift
+        if [ $# -gt 1 ]; then case "$2" in ext4|vfat|exfat|btrfs|xfs) FORMAT_FS="$2"; shift ;; esac; fi ;;
       --dir)     DIR="$2"; shift 2 ;;
       --budget)  BUDGET_GB="$2"; shift 2 ;;
       --manifest) MANIFEST="$2"; shift 2 ;;
@@ -117,7 +123,7 @@ main() {
     TARGET="$DIR"
   else
     if [ -n "$DEVICE" ]; then
-      TARGET="$(mount_device "$DEVICE")"
+      mount_device "$DEVICE"
     else
       # auto-detect: biggest removable unmounted disk
       mapfile -t candidates < <(list_usb_devices | awk '{print $2}')
@@ -125,17 +131,42 @@ main() {
       DEVICE="${candidates[${#candidates[@]}-1]}"
       log "detected usb drive: $DEVICE ($(lsblk -dn -o SIZE "$DEVICE" 2>/dev/null | head -1))"
       confirm "use $DEVICE?" || die "aborted by user"
-      TARGET="$(mount_device "$DEVICE")"
+      mount_device "$DEVICE"
     fi
   fi
   log "target: $TARGET"
 
   STAGING="${STAGING:-$TARGET/.iiab-staging}"
   FINAL="$TARGET/iiab-content"
-  mkdir -p "$STAGING" "$FINAL"
+  if [ "${DRY_RUN:-0}" != "1" ]; then mkdir -p "$STAGING" "$FINAL"; fi
 
   LOG="$TARGET/iiab-download.log"
-  plan_and_download | tee -a "$LOG"
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    plan_and_download
+  else
+    plan_and_download | tee -a "$LOG"
+  fi
+}
+
+# erase + reformat the whole device. deliberately destructive: needs --yes or tty confirm.
+format_drive() {
+  local dev="$1" fs="${FORMAT_FS:-ext4}"
+  [ "$DRY_RUN" = "1" ] && { log "would format $dev as $fs (dry-run)"; return 0; }
+  command -v mkfs."$fs" >/dev/null 2>&1 || die "mkfs.$fs not available"
+  log "formatting $dev as $fs — ALL DATA ON THIS DRIVE WILL BE ERASED"
+  confirm "really erase $dev ($(lsblk -dn -o SIZE "$dev" 2>/dev/null | head -1))?" \
+    || die "aborted by user (pass --yes to skip prompts)"
+  # unmount anything on the device's partitions first
+  local part mp
+  while read -r part; do
+    mp="$(lsblk -dn -o MOUNTPOINT "$part" 2>/dev/null)"
+    if [ -n "$mp" ] && [ "$mp" != "-" ]; then
+      log "unmounting $part from $mp"
+      sudo umount "$part" 2>/dev/null || umount "$part" || die "failed to unmount $part"
+    fi
+  done < <(lsblk -dn -o NAME,TYPE "$dev" 2>/dev/null | awk '$2=="part"{print "/dev/"$1}')
+  sudo mkfs."$fs" -F "$dev" 2>/dev/null || mkfs."$fs" -F "$dev" || die "mkfs.$fs failed on $dev"
+  log "formatted $dev ($fs)"
 }
 
 mount_device() {
@@ -150,12 +181,15 @@ mount_device() {
   rm_flag="$(lsblk -dn -o RM "$dev" 2>/dev/null || echo 0)"
   [ "$rm_flag" = "1" ] || [ "${IIAB_ALLOW_FIXED:-0}" = "1" ] || die "$dev is not removable — refusing. export IIAB_ALLOW_FIXED=1 to override."
 
+  # format step (opt-in) runs before mounting; format_drive handles dry-run announce
+  if [ -n "$FORMAT_FS" ]; then format_drive "$dev"; fi
+
   TARGET="$dev"
-  if [ "${DRY_RUN:-0}" = "1" ]; then echo "/mnt/iiab-usb (dry-run)"; return 0; fi
+  if [ "${DRY_RUN:-0}" = "1" ]; then TARGET="/mnt/iiab-usb (dry-run)"; return 0; fi
   local mnt=/mnt/iiab-usb
   [ -e "$mnt" ] || { sudo mkdir -p "$mnt" || mkdir -p "$mnt"; }
   sudo mount "$dev" "$mnt" 2>/dev/null || mount "$dev" "$mnt" || die "failed to mount $dev at $mnt"
-  echo "$mnt"
+  TARGET="$mnt"
 }
 
 plan_and_download() {
@@ -163,7 +197,11 @@ plan_and_download() {
   budget_mb="$(size_to_mb "${BUDGET_GB}G")"
   log "budget: ${BUDGET_GB}gb  manifest: $MANIFEST  staging: $STAGING"
 
-  cp "$MANIFEST" "$FINAL/MANIFEST"
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: manifest would be copied to $FINAL/MANIFEST"
+  else
+    cp "$MANIFEST" "$FINAL/MANIFEST"
+  fi
 
   local total_planned=0 skipped=0 line prio size_mb cat url name expected_bytes mb_left
   mb_left="$budget_mb"
@@ -215,7 +253,7 @@ plan_and_download() {
     if [ "$size_mb" != "-" ] && [ -n "$size_mb" ]; then mb_left=$((mb_left - size_mb)); fi
   done < <(parse_manifest "$MANIFEST")
 
-  rm -rf "$STAGING"
+  if [ "$DRY_RUN" != "1" ]; then rm -rf "$STAGING"; fi
   log "finished. content at: $FINAL/  ($(ls "$FINAL" 2>/dev/null | wc -l) files)"
   if [ "$DRY_RUN" = "1" ]; then
     log "(dry-run: nothing was downloaded)"
