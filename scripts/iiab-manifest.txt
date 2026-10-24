@@ -1,0 +1,15 @@
+# iiab-usb-download manifest — priority-ordered kiwix zim bundle for a 32gb stick
+# format: <priority>;<expected_mb or ->;<category>;<url>
+# budget default 30gb; lower-priority entries get skipped if the budget runs out.
+# sizes are approximate (from download.kiwix.org listing) and used for budgeting;
+# actual verification uses the server's content-length.
+#
+# bundle total ~27.3gb — english content in the spirit of internet-in-a-box:
+# encyclopedia + travel + dictionary + repair + video lessons + stem sims + first aid
+1;6656;wikipedia;https://lb.download.kiwix.org/zim/wikipedia/wikipedia_en_top_maxi_2026-09.zim
+2;1024;wikivoyage;https://lb.download.kiwix.org/zim/wikivoyage/wikivoyage_en_all_maxi_2026-09.zim
+3;8704;wiktionary;https://lb.download.kiwix.org/zim/wiktionary/wiktionary_en_all_nopic_2026-08.zim
+4;3379;ifixit;https://lb.download.kiwix.org/zim/ifixit/ifixit_en_all_2025-12.zim
+5;8397;ted;https://lb.download.kiwix.org/zim/ted/ted_mul_education_2026-09.zim
+6;104;phet;https://lb.download.kiwix.org/zim/phet/phet_en_all_2026-08.zim
+7;67;medicine;https://lb.download.kiwix.org/zim/other/zimgit-medicine_en_2024-08.zim
