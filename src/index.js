@@ -24,6 +24,7 @@ import {
 } from "./loop-detect.js";
 import { pathToFileURL } from "url";
 import { loadPurpose, parsePurposeArgs } from "./purpose.js";
+import { resolveDefaultSkillPaths } from "./default-skills.js";
 import {
   sendNotify,
   startedMessage,
@@ -445,6 +446,12 @@ async function runCycle(message = null, sessionFileToResume = null) {
     });
   }
 
+  // every run gets the packaged skills (not just purpose runs): without
+  // this, main-agent runs (discord one-offs, scheduled cycles) had no web
+  // tools at all — research questions silently fell back to model knowledge
+  // (see 2026-10-27 colibri/solar sessions: "no web access this run").
+  const defaultSkillPaths = resolveDefaultSkillPaths(process.env.PI_SKILLS);
+
   let purpose = null;
   if (purposeName) {
     purpose = await loadPurpose(purposeName);
@@ -502,9 +509,10 @@ async function runCycle(message = null, sessionFileToResume = null) {
     appendSystemPromptOverride: (base) => [...base, prompt],
     // load npm-packaged pi extensions (gemini batch provider, etc.)
     additionalExtensionPaths: ADDITIONAL_EXTENSION_PATHS,
-    // purpose-specific skills (dirs) pulled into the session
-    ...(purpose && purpose.skillPaths.length
-      ? { additionalSkillPaths: purpose.skillPaths }
+    // skills pulled into the session: packaged defaults for every run,
+    // plus purpose-specific extras on top
+    ...(defaultSkillPaths.length || (purpose && purpose.skillPaths.length)
+      ? { additionalSkillPaths: [...defaultSkillPaths, ...(purpose?.skillPaths ?? [])] }
       : {}),
   });
 
