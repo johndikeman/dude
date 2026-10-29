@@ -33,6 +33,13 @@ import {
   releaseLock,
 } from "./agent-lock.js";
 import { startRuntimeCap, maxRuntimeMs } from "./runtime-cap.js";
+import {
+  createStallWatchdog,
+  stallMs as stallWatchdogMs,
+  diagMs as stallDiagMs,
+  maxStallRetries,
+  stallNudgePrompt,
+} from "./stall-watchdog.js";
 import { buildAgentPrompt } from "./agent-prompt.js";
 import {
   writeBreadcrumb,
@@ -111,6 +118,15 @@ function log(msg) {
 
 let isRunning = false;
 let emptyResponseRetries = 0; // nudges issued for the current run
+// llm-stall watchdog state for the current run (src/stall-watchdog.js):
+// a silently-hung llm request used to just sit there until the runtime
+// cap hard-killed it, with zero feedback (incident 2026-10-29, session
+// 01a1888d: 41 minutes of nothing after a tool result). the watchdog
+// aborts the hung session and we re-prompt it here, capped.
+let stallRetries = 0;
+let stallAbortPending = false; // watchdog fired; waiting for the abort to settle
+let lastStallDiag = null; // verbose diag payload from the most recent stall fire
+let stopStallWatchdog = null;
 let currentRunningTask = null;
 let pausedTaskInfo = null; // Store info about paused tasks for status display
 let lastRunHitQuotaLimit = false;
@@ -135,6 +151,14 @@ function releaseLockAndStopCap() {
     stopRuntimeCap = null;
   }
   // clear the discord presence so john can tell at a glance the run is over
+  if (stopStallWatchdog) {
+    try {
+      stopStallWatchdog();
+    } catch {
+      /* nothing */
+    }
+    stopStallWatchdog = null;
+  }
   clearAgentStatus(client, log);
   releaseLock();
 }
@@ -368,6 +392,9 @@ async function handleMessage(message) {
 async function runCycle(message = null, sessionFileToResume = null) {
   isRunning = true;
   emptyResponseRetries = 0;
+  stallRetries = 0;
+  stallAbortPending = false;
+  lastStallDiag = null;
   lastRunHitQuotaLimit = false;
   // wall-clock cap: a runaway run must never hold the agent lock
   // indefinitely (incident 2026-09-24: a wait-fired run held the lock for
@@ -575,8 +602,39 @@ async function runCycle(message = null, sessionFileToResume = null) {
     releaseFn: () => releaseLock(),
   });
   log(
-    `runCycle: agent session created (sessionFile=${session.sessionFile ?? "<none>"})`,
+    `runCycle: agent session created (sessionFile=${session.sessionFile ?? "<none>"}, model=${MODEL_PROVIDER}/${MODEL_CODE})`,
   );
+  // llm-stall watchdog: if the backend silently hangs a request (no
+  // streaming chunks, no settle, no error — incident 2026-10-29), abort
+  // it after the stall threshold so the run can be nudged to continue
+  // instead of sitting frozen until the runtime cap hard-kills it.
+  if (stopStallWatchdog) {
+    try { stopStallWatchdog(); } catch { /* nothing */ }
+    stopStallWatchdog = null;
+  }
+  const watchdog = createStallWatchdog({
+    stallMs: stallWatchdogMs(),
+    diagMs: stallDiagMs(),
+    log,
+    onStall: (diag) => {
+      if (!isRunning) return; // run already ending; abort race
+      stallAbortPending = true;
+      stallRetries += 1;
+      lastStallDiag = diag;
+      log(
+        `llm stall watchdog: aborting stalled session (nudge ${stallRetries}/${maxStallRetries()} will follow) ` +
+          `diag=${JSON.stringify(diag)}`,
+      );
+      try {
+        session.abort().catch((e) => {
+          log(`stall abort failed: ${e?.stack || e?.message || e}`);
+        });
+      } catch (e) {
+        log(`stall abort threw: ${e?.stack || e?.message || e}`);
+      }
+    },
+  });
+  stopStallWatchdog = () => watchdog.stop();
 
   // -----------------------------------------------------------------
   // tool-loop breaker.
@@ -593,6 +651,13 @@ async function runCycle(message = null, sessionFileToResume = null) {
 
   // https://github.com/earendil-works/pi/blob/74786a748f5314cc2127ebbcfa2d732e9b8433f5/packages/coding-agent/src/core/agent-session.ts#L143
   session.subscribe(async (event) => {
+    // every agent event is watchdog activity; tool execution events
+    // additionally pause the stall clock while a tool runs
+    try {
+      watchdog.feed(event.type);
+    } catch {
+      /* watchdog must never break the event pipeline */
+    }
     switch (event.type) {
       case "message_update":
         break;
@@ -665,6 +730,28 @@ async function runCycle(message = null, sessionFileToResume = null) {
               sessionFile: session.sessionFile,
             });
           }
+          break;
+        }
+
+        // llm-stall recovery: the watchdog aborted a silently-hung llm
+        // request (no data, no error for the full stall threshold). if we
+        // have retries left, re-prompt the session to continue instead of
+        // ending the run mid-task (incident 2026-10-29, session 01a1888d).
+        if (
+          stallAbortPending &&
+          stallRetries <= maxStallRetries()
+        ) {
+          stallAbortPending = false;
+          watchdog.reset();
+          log(
+            `stall recovery: re-prompting session to continue (stall nudge ${stallRetries}/${maxStallRetries()})`,
+          );
+          session.prompt(stallNudgePrompt(stallRetries, lastStallDiag || {})).catch((e) => {
+            log(`stall nudge prompt failed: ${e?.stack || e?.message || e}`);
+            isRunning = false;
+            releaseLockAndStopCap();
+            stopTyping?.();
+          });
           break;
         }
 
