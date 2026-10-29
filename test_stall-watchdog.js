@@ -159,6 +159,19 @@ test("long-running tool does not count as a stall", () => {
   assert.equal(stalls.length, 1);
 });
 
+test("any event type keeps the watchdog alive, not just tools", () => {
+  const { clock, stalls, watchdog } = makeHarness({ stallMs: 600_000, diagMs: 120_000 });
+  // john's clarification (2026-10-29): any text response/movement in the
+  // session should keep it alive — not just tool calls. pi emits lots of
+  // event types (message_start/update/end, agent_start, entry_appended…)
+  // and the harness feeds every one of them to the watchdog.
+  for (const type of ["agent_start", "message_start", "message_update", "message_end", "entry_appended", "session_info_changed"]) {
+    watchdog.feed(type);
+    clock.advance(500_000); // 8.3min — would fire if this type weren't counted
+    assert.equal(stalls.length, 0, `event type ${type} did not reset the stall clock`);
+  }
+});
+
 test("tool depth is clamped: an end without a start cannot go negative", () => {
   const { clock, watchdog } = makeHarness({ stallMs: 600_000, diagMs: 120_000 });
   watchdog.feed("tool_execution_end");
