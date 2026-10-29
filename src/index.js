@@ -25,12 +25,13 @@ import {
 import { pathToFileURL } from "url";
 import { loadPurpose, parsePurposeArgs } from "./purpose.js";
 import { resolveDefaultSkillPaths } from "./default-skills.js";
+import { sendNotify, startedMessage, finishedMessage } from "./notify.js";
 import {
-  sendNotify,
-  startedMessage,
-  finishedMessage,
-} from "./notify.js";
-import { acquireLock, acquireLockOrExit, releaseLock } from "./agent-lock.js";
+  readLock,
+  acquireLock,
+  acquireLockOrExit,
+  releaseLock,
+} from "./agent-lock.js";
 import { startRuntimeCap, maxRuntimeMs } from "./runtime-cap.js";
 import { buildAgentPrompt } from "./agent-prompt.js";
 import {
@@ -126,7 +127,11 @@ let stopRuntimeCap = null;
 /** end-of-run lock release that also disarms the wall-clock cap */
 function releaseLockAndStopCap() {
   if (stopRuntimeCap) {
-    try { stopRuntimeCap(); } catch { /* nothing */ }
+    try {
+      stopRuntimeCap();
+    } catch {
+      /* nothing */
+    }
     stopRuntimeCap = null;
   }
   // clear the discord presence so john can tell at a glance the run is over
@@ -160,24 +165,33 @@ function handleInterruptSignal(sig) {
         purpose: activePurpose,
       });
       try {
-        appendSessionMarker(
-          activeSession,
-          "interrupted",
-          { reason: sig, ts: bc.ts, note: "session ended abnormally; see interrupted.json + resume oneshot" },
-        );
+        appendSessionMarker(activeSession, "interrupted", {
+          reason: sig,
+          ts: bc.ts,
+          note: "session ended abnormally; see interrupted.json + resume oneshot",
+        });
       } catch (e) {
         log(`interrupt: session marker write failed: ${e?.message || e}`);
       }
       try {
-        const f = writeResumeOneShot({ reason: sig, ts: bc.ts, sessionFile: bc.sessionFile, purpose: bc.purpose });
+        const f = writeResumeOneShot({
+          reason: sig,
+          ts: bc.ts,
+          sessionFile: bc.sessionFile,
+          purpose: bc.purpose,
+        });
         log(`interrupt: wrote resume one-shot ${f}`);
       } catch (e) {
         log(`interrupt: resume oneshot write failed: ${e?.message || e}`);
       }
-      log(`interrupt: ${sig} during agent run; breadcrumb written (session=${bc.sessionFile ?? "?"})`);
+      log(
+        `interrupt: ${sig} during agent run; breadcrumb written (session=${bc.sessionFile ?? "?"})`,
+      );
     }
   } catch (e) {
-    log(`interrupt: breadcrumb handling failed: ${e?.stack || e?.message || e}`);
+    log(
+      `interrupt: breadcrumb handling failed: ${e?.stack || e?.message || e}`,
+    );
   }
   releaseLock();
   process.exit(sig === "SIGINT" ? 130 : 0);
@@ -371,7 +385,10 @@ async function runCycle(message = null, sessionFileToResume = null) {
   // step on each other's task-file edits and sessions). --once invocations
   // exit 75 so upstream runners treat it as "retry later", not "failed";
   // the long-running discord service just skips the message-triggered run.
-  const isOneShotRun = process.argv.includes("--once") || process.argv.includes("--cron") || process.argv.includes("--run");
+  const isOneShotRun =
+    process.argv.includes("--once") ||
+    process.argv.includes("--cron") ||
+    process.argv.includes("--run");
   if (isOneShotRun) {
     acquireLockOrExit({ log });
   } else if (!acquireLock()) {
@@ -424,9 +441,13 @@ async function runCycle(message = null, sessionFileToResume = null) {
     if (bc?.sessionFile && fs.existsSync(bc.sessionFile)) {
       sessionFileToResume = bc.sessionFile;
       resumeInfo = bc;
-      log(`runCycle: resuming interrupted run from ${bc.sessionFile} (killed at ${bc.ts})`);
+      log(
+        `runCycle: resuming interrupted run from ${bc.sessionFile} (killed at ${bc.ts})`,
+      );
     } else {
-      log("runCycle: --resume-interrupted set but no valid breadcrumb/session; running normally");
+      log(
+        "runCycle: --resume-interrupted set but no valid breadcrumb/session; running normally",
+      );
     }
     clearBreadcrumb(paths.configDir);
   }
@@ -458,14 +479,15 @@ async function runCycle(message = null, sessionFileToResume = null) {
     // skill paths may be bare names resolved against the packaged skills dir
     if (process.env.PI_SKILLS) {
       purpose.skillPaths = purpose.skillPaths.map((p) =>
-        p.startsWith("/") ? p : `${process.env.PI_SKILLS.replace(/\/$/, "")}/${p}`,
+        p.startsWith("/")
+          ? p
+          : `${process.env.PI_SKILLS.replace(/\/$/, "")}/${p}`,
       );
     }
     log(
       `runCycle: loaded purpose "${purposeName}" (${purpose.skillPaths.length} extra skills)${context ? " with wait-runner context" : ""}`,
     );
   }
-
 
   const prompt = buildAgentPrompt({ paths, purpose, context, message });
 
@@ -512,7 +534,12 @@ async function runCycle(message = null, sessionFileToResume = null) {
     // skills pulled into the session: packaged defaults for every run,
     // plus purpose-specific extras on top
     ...(defaultSkillPaths.length || (purpose && purpose.skillPaths.length)
-      ? { additionalSkillPaths: [...defaultSkillPaths, ...(purpose?.skillPaths ?? [])] }
+      ? {
+          additionalSkillPaths: [
+            ...defaultSkillPaths,
+            ...(purpose?.skillPaths ?? []),
+          ],
+        }
       : {}),
   });
 
@@ -600,9 +627,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
             });
           }
         } catch (e) {
-          log(
-            `loop detector error: ${e?.stack || e?.message || e}`,
-          );
+          log(`loop detector error: ${e?.stack || e?.message || e}`);
         }
         break;
       }
@@ -768,12 +793,11 @@ async function runCycle(message = null, sessionFileToResume = null) {
   });
 
   // Actually kick off the agent run - without this the session sits idle.
-  const promptToSend =
-    resumeInfo
-      ? buildResumePrompt(resumeInfo)
-      : sessionFileToResume && message
-        ? `current date: ${new Date().toLocaleString("en-US")}\n\nuser ${message.author?.tag || ""} sent a follow-up via discord:\n${message.content}`
-        : prompt;
+  const promptToSend = resumeInfo
+    ? buildResumePrompt(resumeInfo)
+    : sessionFileToResume && message
+      ? `current date: ${new Date().toLocaleString("en-US")}\n\nuser ${message.author?.tag || ""} sent a follow-up via discord:\n${message.content}`
+      : prompt;
   log("runCycle: sending prompt to agent...");
   session.prompt(promptToSend).catch(async (e) => {
     stopTyping?.();
