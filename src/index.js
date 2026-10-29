@@ -6,6 +6,11 @@ import path from "path";
 import stripAnsi from "strip-ansi";
 import { startTypingLoop } from "./typing.js";
 import {
+  acquireScheduledPresence,
+  releaseScheduledPresence,
+  getScheduledPresenceClient,
+} from "./scheduled-presence.js";
+import {
   setAgentStatus,
   clearAgentStatus,
   attachStatusReady,
@@ -160,6 +165,10 @@ function releaseLockAndStopCap() {
     stopStallWatchdog = null;
   }
   clearAgentStatus(client, log);
+  // scheduled runs hold a persistent presence client (see
+  // scheduled-presence.js) — release it so the presence clears and the
+  // one-shot process can exit cleanly
+  void releaseScheduledPresence({ log });
   releaseLock();
 }
 
@@ -298,8 +307,12 @@ client.on("messageCreate", async (message) => {
  */
 async function notifyRunStart({ trigger, purpose, context }) {
   try {
+    // scheduled runs hold a persistent presence client (acquireScheduledPresence
+    // has usually already run by the time the start ping fires) — reuse it so
+    // pings don't spin up throwaway clients; falls back to the main service
+    // client inside the discord service, or a throwaway in one-shot runs.
     await sendNotify({
-      existingClient: client,
+      existingClient: (await acquireScheduledPresence({ log }).catch(() => null))?.client || getScheduledPresenceClient() || client,
       content: startedMessage({ trigger, purpose, context }),
       paths: getPaths(),
       log,
@@ -312,7 +325,7 @@ async function notifyRunStart({ trigger, purpose, context }) {
 async function notifyRunFinish({ outcome, summary, err, sessionFile }) {
   try {
     const msg = await sendNotify({
-      existingClient: client,
+      existingClient: getScheduledPresenceClient() || client,
       content: finishedMessage({ outcome, summary, err, sessionFile }),
       paths: getPaths(),
       log,
@@ -432,6 +445,13 @@ async function runCycle(message = null, sessionFileToResume = null) {
   // show a presence in discord while the run is active so john can tell
   // at a glance a session is running (cleared by releaseLockAndStopCap)
   setAgentStatus(client, log);
+  // scheduled (--once) runs never log in the main client, so the queued
+  // presence above would never apply — acquire a persistent presence client
+  // (presence + typing indicator in the notify channel) for the whole run.
+  // fire-and-forget: a discord hiccup must never delay the run.
+  if (!message) {
+    void acquireScheduledPresence({ log });
+  }
 
   // keep a "typing..." indicator visible in the channel for the whole run
   const stopTyping = message ? startTypingLoop(message.channel, { log }) : null;
