@@ -41,4 +41,25 @@ if ! grep -A3 'runtimeMaxSec = lib.mkOption' "$FLAKE_NIX" | grep -q 'default = "
 fi
 echo "PASS: runtimeMaxSec defaults to 30m"
 
+# check 6: sync-setup is conditional (skip when vault already configured)
+if ! grep -q 'ensureSyncSetupScript' "$FLAKE_NIX"; then
+  echo "FAIL: ensureSyncSetupScript wrapper not found (sync-setup re-runs on every restart)"
+  exit 1
+fi
+echo "PASS: ensureSyncSetupScript wrapper exists"
+
+# check 7: wrapper must gate on sync-status (exit code), not run unconditionally
+if ! grep -q 'ob sync-status' "$FLAKE_NIX"; then
+  echo "FAIL: sync-setup wrapper does not check sync-status before setup"
+  exit 1
+fi
+echo "PASS: sync-setup gated on ob sync-status"
+
+# check 8: no unit ExecStartPre runs raw sync-setup anymore
+if grep -qE 'ob sync-setup --vault' "$FLAKE_NIX"; then
+  echo "FAIL: raw sync-setup still present in an ExecStartPre"
+  exit 1
+fi
+echo "PASS: no raw sync-setup in ExecStartPre"
+
 echo "=== all resilience checks passed ==="

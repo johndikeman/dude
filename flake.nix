@@ -179,6 +179,28 @@
               done
               exit "$status"
             '';
+
+            # conditional sync-setup wrapper: ob sync-setup is idempotent but
+            # re-runs the whole "fetch vault info + reconfigure" dance on every
+            # restart of the continuous sync service. since RuntimeMaxSec
+            # intentionally restarts the service every 30m (token refresh),
+            # that meant a pointless setup cycle (with scary merge warnings)
+            # 48x a day. this wrapper only runs sync-setup when the vault is
+            # not yet configured (or its e2e keys are missing) — ob
+            # sync-status exits non-zero in exactly those cases.
+            ensureSyncSetupScript = vaultName: vaultPath:
+              pkgs.writeShellScript "dude-ob-sync-setup-${lib.strings.sanitizeDerivationName vaultName}" ''
+                if ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob sync-status \
+                     --path ${lib.strings.escapeShellArg vaultPath} --json >/dev/null 2>&1; then
+                  echo "vault already configured, skipping sync-setup"
+                else
+                  echo "vault not configured (or e2e keys missing), running sync-setup..."
+                  ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
+                    ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob sync-setup \
+                      --vault ${lib.strings.escapeShellArg vaultName} \
+                      --path ${lib.strings.escapeShellArg vaultPath}
+                fi
+            '';
           in
           {
             options.services.dude-agent = {
@@ -645,7 +667,7 @@
                       ExecStartPre = [
                         "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianSync.vaultPath}"
                         "${obLoginScript}"
-                        "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync-setup --vault \"main\" --path ${cfg.obsidianSync.vaultPath}"
+                        "${ensureSyncSetupScript "main" cfg.obsidianSync.vaultPath}"
                       ];
                       ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync --continuous --path ${cfg.obsidianSync.vaultPath}";
                       Restart = "always";
@@ -762,7 +784,7 @@
                       ExecStartPre = [
                         "${pkgs.coreutils}/bin/mkdir -p ${v.path}"
                         "${obLoginScript}"
-                        "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync-setup --vault ${lib.strings.escapeShellArg v.name} --path ${v.path}"
+                        "${ensureSyncSetupScript v.name v.path}"
                       ];
                       ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync --continuous --path ${v.path}";
                       Restart = "always";
