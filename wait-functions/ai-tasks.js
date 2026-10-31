@@ -12,14 +12,19 @@ import crypto from "crypto";
 
 export const purpose = null;
 
-function checklistHash(content) {
+export function defaultTasksFile() {
+  const vaultDir = process.env.OBSIDIAN_DIR || `${process.env.HOME}/vault`;
+  return process.env.DUDE_TASKS_FILE || `${vaultDir}/ai-tasks.md`;
+}
+
+/** sha256 over just the checklist lines — the value stored in wait-state.json */
+export function checklistHash(content) {
   const lines = content.split("\n").filter((l) => /^\s*- \[[ xX]\]/.test(l));
   return crypto.createHash("sha256").update(lines.join("\n")).digest("hex");
 }
 
 export async function check({ state }) {
-  const vaultDir = process.env.OBSIDIAN_DIR || `${process.env.HOME}/vault`;
-  const tasksFile = process.env.DUDE_TASKS_FILE || `${vaultDir}/ai-tasks.md`;
+  const tasksFile = defaultTasksFile();
   let content = null;
   try {
     content = fs.readFileSync(tasksFile, "utf8");
