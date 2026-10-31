@@ -353,6 +353,10 @@ export function spawnDetachedAgent({ args, spawnFn, unit, runtimeMaxSec = defaul
     "--user", "--collect", "--quiet",
     `--unit=${unit}`,
     `--description=dude-agent wait-fired run (${unit})`,
+    // lock-skip exits 75 (EX_TEMPFAIL) on purpose; without this the
+    // transient unit is marked failed and degrades the systemd user
+    // session (breaks HM activation during deploys, 2026-10-31).
+    "--property=SuccessExitStatus=75",
     // wall-clock kill for the transient unit (incident 2026-09-24: a
     // wait-fired run held the agent lock for 13h). belt-and-suspenders
     // with the in-agent runtime cap — systemd kills the whole cgroup,

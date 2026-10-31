@@ -753,6 +753,13 @@
                         After = [ "network.target" ];
                         StartLimitBurst = "5";
                         StartLimitIntervalSec = "120s";
+                        # the agent exits 75/TEMPFAIL when another run holds
+                        # the agent lock — that's a deliberate skip, not a
+                        # failure. marking the unit failed degrades the whole
+                        # user session and (2026-10-31 incident) made HM
+                        # activation exit 1 during onFilesChange → deploy-rs
+                        # magic-rollback. treat 75 as success.
+                        SuccessExitStatus = "75";
                       };
                       # simple, not oneshot — see dude-agent.service above
                       # (an LLM cycle takes minutes; a blocking start here

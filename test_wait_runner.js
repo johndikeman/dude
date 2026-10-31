@@ -671,6 +671,17 @@ test("spawnDetachedAgent includes --runtime-maxsec (default and override)", asyn
   assert.ok(!spawned[2][1].some((a) => String(a).startsWith("--runtime-maxsec=")));
 });
 
+test("spawnDetachedAgent passes --property=SuccessExitStatus=75 (lock-skip exits 75 by design; must not degrade the session)", async () => {
+  const spawned = [];
+  const spawnFn = (exe, argv) => {
+    spawned.push([exe, argv]);
+    return { stderr: { on: () => {} }, on: (ev, cb) => { if (ev === "exit") setImmediate(() => cb(0)); } };
+  };
+  await spawnDetachedAgent({ args: ["--once"], spawnFn, unit: "dude-agent-wait-test" });
+  assert.ok(spawned[0][1].some((a) => a === "--property=SuccessExitStatus=75"),
+    `expected --property=SuccessExitStatus=75 in ${spawned[0][1].join(" ")}`);
+});
+
 test("agent-lock: age-stale takeover reclaims lock from a hung live holder", () => {
   // fresh lock held by a live pid (this process) -> busy
   const lockFile = path.join(tmpDir(), "agent-lock.json");
