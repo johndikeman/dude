@@ -114,13 +114,11 @@
               cp ${./src/langfuse/pi-langfuse-traces.ts} $out/extensions/pi-langfuse-traces.ts
               cp ${./src/wait-runner/tasks-wait-state-sync.ts} $out/extensions/tasks-wait-state-sync.ts
               cp ${./src/wait-runner/tasks-wait-state.js} $out/extensions/tasks-wait-state.js
-              cp ${./wait-functions/ai-tasks.js} $out/extensions/ai-tasks-deps.js
             '';
             passthru.extensions = {
               "pi-langfuse-traces.ts" = ./src/langfuse/pi-langfuse-traces.ts;
               "tasks-wait-state-sync.ts" = ./src/wait-runner/tasks-wait-state-sync.ts;
               "tasks-wait-state.js" = ./src/wait-runner/tasks-wait-state.js;
-              "ai-tasks-deps.js" = ./wait-functions/ai-tasks.js;
             };
           };
 
