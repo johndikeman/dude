@@ -101,6 +101,9 @@
           # (they live outside the dude package, so relative imports into the
           # repo's src/ or wait-functions/ won't resolve) — hence ai-tasks.js is
           # vendored as ai-tasks-deps.js.
+          # Extension files are also exposed as a passthru attrset
+          # (name -> source path) so consumers can enumerate them without
+          # evaluating the build (e.g. to map them into ~/.pi/agent/extensions/).
           packages.extensions = pkgs.stdenv.mkDerivation {
             pname = "dude-agent-extensions";
             version = "0.1.0";
@@ -113,6 +116,12 @@
               cp ${./src/wait-runner/tasks-wait-state.js} $out/extensions/tasks-wait-state.js
               cp ${./wait-functions/ai-tasks.js} $out/extensions/ai-tasks-deps.js
             '';
+            passthru.extensions = {
+              "pi-langfuse-traces.ts" = ./src/langfuse/pi-langfuse-traces.ts;
+              "tasks-wait-state-sync.ts" = ./src/wait-runner/tasks-wait-state-sync.ts;
+              "tasks-wait-state.js" = ./src/wait-runner/tasks-wait-state.js;
+              "ai-tasks-deps.js" = ./wait-functions/ai-tasks.js;
+            };
           };
 
           # Chromium needs a fontconfig config + at least one font, otherwise its
