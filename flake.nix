@@ -95,6 +95,26 @@
             '';
           };
 
+          # Bundled pi agent extensions (langfuse traces, wait-state sync).
+          # Installed declaratively by the homeManagerModule into
+          # ~/.pi/agent/extensions/. The extension files must be self-contained
+          # (they live outside the dude package, so relative imports into the
+          # repo's src/ or wait-functions/ won't resolve) — hence ai-tasks.js is
+          # vendored as ai-tasks-deps.js.
+          packages.extensions = pkgs.stdenv.mkDerivation {
+            pname = "dude-agent-extensions";
+            version = "0.1.0";
+            src = ./.;
+            phases = [ "installPhase" ];
+            installPhase = ''
+              mkdir -p $out/extensions
+              cp ${./src/langfuse/pi-langfuse-traces.ts} $out/extensions/pi-langfuse-traces.ts
+              cp ${./src/wait-runner/tasks-wait-state-sync.ts} $out/extensions/tasks-wait-state-sync.ts
+              cp ${./src/wait-runner/tasks-wait-state.js} $out/extensions/tasks-wait-state.js
+              cp ${./wait-functions/ai-tasks.js} $out/extensions/ai-tasks-deps.js
+            '';
+          };
+
           # Chromium needs a fontconfig config + at least one font, otherwise its
           # renderer aborts in Skia (SkFontMgr_FontConfigInterface "Not implemented")
           # on any real page. On non-NixOS hosts there is no /etc/fonts, so we ship
@@ -437,6 +457,18 @@
                   helper = lib.mkDefault "!gh auth git-credential";
                 };
               };
+
+              # Declarative pi extensions: link the bundled extension files
+              # into pi's global extension dir (~/.pi/agent/extensions/),
+              # replacing the old imperative copy-in. Files come from
+              # self.packages.extensions so extension changes deploy with
+              # the agent. mkDefault so consumers can add/override entries.
+              home.file = lib.mkMerge [
+                (builtins.listToAttrs (lib.mapAttrsToList (name: _src: {
+                  name = ".pi/agent/extensions/${name}";
+                  value.source = "${self.packages.${pkgs.stdenv.hostPlatform.system}.extensions}/extensions/${name}";
+                }) self.packages.${pkgs.stdenv.hostPlatform.system}.extensions.extensions))
+              ];
 
               # 0. Post-activation health check: verify long-running services
               # actually reach "active" state. Failing this aborts activation,
