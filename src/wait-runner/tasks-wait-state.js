@@ -21,8 +21,30 @@
 
 import fs from "fs";
 import path from "path";
-import { defaultStateFile } from "../wait-runner.js";
-import { checklistHash, defaultTasksFile } from "../../wait-functions/ai-tasks.js";
+import crypto from "crypto";
+
+// self-contained copy of wait-runner.js's defaultStateFile — the installed
+// extension lives outside the dude package, so relative imports into the
+// repo can't resolve there.
+function defaultStateFile() {
+  return process.env.DUDE_WAIT_STATE_FILE ||
+    path.join(
+      process.env.DUDE_CONFIG_DIR || path.join(process.env.HOME || "/tmp", ".config/dude"),
+      "wait-state.json",
+    );
+}
+
+// self-contained copy of wait-functions/ai-tasks.js's defaultTasksFile
+function defaultTasksFile() {
+  const vaultDir = process.env.OBSIDIAN_DIR || `${process.env.HOME}/vault`;
+  return process.env.DUDE_TASKS_FILE || `${vaultDir}/ai-tasks.md`;
+}
+
+// self-contained copy of ai-tasks.js's checklistHash
+function checklistHash(content) {
+  const lines = content.split("\n").filter((l) => /^\s*- \[[ xX]\]/.test(l));
+  return crypto.createHash("sha256").update(lines.join("\n")).digest("hex");
+}
 
 /** absolute path of the task file (env-overridable, same lookup as the wait fn) */
 export function tasksFile() {
@@ -65,3 +87,9 @@ export function writeTasksHash(hash, stateFile = defaultStateFile()) {
   }
   return { stateFile };
 }
+
+// this file is both a library (imported by tasks-wait-state-sync.ts) and
+// installed into pi's extensions dir, where pi tries to load every file as
+// an extension. export a no-op factory so the extension load is a no-op
+// (the real hooking happens in tasks-wait-state-sync.ts).
+export default function () { /* no-op: helper module, see tasks-wait-state-sync.ts */ }
