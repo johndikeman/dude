@@ -646,7 +646,7 @@ test("detached spawn failure falls back to the synchronous path", async () => {
   assert.deepEqual(pendingRebaselineNames({ stateFile }), []);
 });
 
-test("spawnDetachedAgent includes --runtime-maxsec (default and override)", async () => {
+test("spawnDetachedAgent includes RuntimeMaxSec property (default and override)", async () => {
   const spawned = [];
   const spawnFn = (exe, argv) => {
     spawned.push([exe, argv]);
@@ -662,13 +662,15 @@ test("spawnDetachedAgent includes --runtime-maxsec (default and override)", asyn
   await run(undefined);
   assert.equal(spawned[0][0], "systemd-run");
   const argv0 = spawned[0][1];
-  assert.ok(argv0.some((a) => a === "--runtime-maxsec=14400"), `expected --runtime-maxsec=14400 in ${argv0.join(" ")}`);
+  // systemd 259 removed --runtime-maxsec; must use the property form
+  assert.ok(argv0.some((a) => a === "--property=RuntimeMaxSec=14400"), `expected --property=RuntimeMaxSec=14400 in ${argv0.join(" ")}`);
+  assert.ok(!argv0.some((a) => String(a).startsWith("--runtime-maxsec=")), "legacy --runtime-maxsec must be gone");
   // explicit override wins
   await run(600);
-  assert.ok(spawned[1][1].some((a) => a === "--runtime-maxsec=600"));
+  assert.ok(spawned[1][1].some((a) => a === "--property=RuntimeMaxSec=600"));
   // null disables
   await run(null);
-  assert.ok(!spawned[2][1].some((a) => String(a).startsWith("--runtime-maxsec=")));
+  assert.ok(!spawned[2][1].some((a) => String(a).startsWith("--property=RuntimeMaxSec=")));
 });
 
 test("spawnDetachedAgent passes --property=SuccessExitStatus=75 (lock-skip exits 75 by design; must not degrade the session)", async () => {
