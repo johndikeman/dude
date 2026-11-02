@@ -61,9 +61,11 @@ const require = createRequire(import.meta.url);
 
 // resolve bundled pi extension entry points (provider extensions etc.) so the
 // resource loader picks them up in every session
-const ADDITIONAL_EXTENSION_PATHS = ["pi-gemini-batch"]
+import { globalPiExtensionPaths } from "./agent-extensions.js";
+const ADDITIONAL_EXTENSION_PATHS = ["pi-gemini-batch", ...globalPiExtensionPaths()]
   .map((pkg) => {
     try {
+      if (path.isAbsolute(pkg)) return pkg;
       return require.resolve(pkg); // absolute path to package main (src/index.js)
     } catch {
       return null;

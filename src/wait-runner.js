@@ -34,9 +34,10 @@ import { pathToFileURL, fileURLToPath } from "url";
 import { isAgentRunning } from "./agent-lock.js";
 import { maxRuntimeMs } from "./runtime-cap.js";
 
-/** systemd --runtime-maxsec for detached wait-fired agent runs; matches
- * the in-agent runtime cap (slightly larger so the cap's graceful abort
- * gets a chance before systemd kills the cgroup). 0/null disables. */
+/** systemd RuntimeMaxSec for detached wait-fired agent runs (passed as
+ * --property; the --runtime-maxsec shorthand was removed in systemd 259).
+ * matches the in-agent runtime cap (slightly larger so the cap's graceful
+ * abort gets a chance before systemd kills the cgroup). 0/null disables. */
 export function defaultRuntimeMaxSec(env = process.env) {
   const ms = maxRuntimeMs(env);
   return ms > 0 ? Math.ceil(ms / 1000) : null;
@@ -361,7 +362,11 @@ export function spawnDetachedAgent({ args, spawnFn, unit, runtimeMaxSec = defaul
     // wait-fired run held the agent lock for 13h). belt-and-suspenders
     // with the in-agent runtime cap — systemd kills the whole cgroup,
     // including any browser children the run left behind. null/0 disables.
-    ...(runtimeMaxSec ? [`--runtime-maxsec=${runtimeMaxSec}`] : []),
+    // systemd 259 removed the --runtime-maxsec shorthand (found live
+    // 2026-11-02: "unrecognized option" → every detached spawn fell back
+    // to sync, so deploys could SIGTERM in-flight runs again); the
+    // property form works across systemd versions.
+    ...(runtimeMaxSec ? [`--property=RuntimeMaxSec=${runtimeMaxSec}`] : []),
     ...setenv,
     process.execPath, // interpreter
     ...args,          // agent entry + flags — was previously DROPPED, so
