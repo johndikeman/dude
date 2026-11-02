@@ -11,15 +11,32 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
  * configured purely via env (LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY).
  * if any of them is missing the extension goes inert so non-langfuse machines
  * are unaffected. errors are logged to stderr, never thrown into the agent loop.
+ *
+ * auto-enqueue (john's pick, 2026-11-01): every session trace lands in the
+ * "session-review" annotation queue on shutdown so john can rate/annotate from
+ * the phone UI. disable with LANGFUSE_AUTO_ENQUEUE=off; queue name overridable
+ * via LANGFUSE_QUEUE_NAME. enqueue retries because trace ingestion is async —
+ * the trace may not be queryable for a few seconds after the last span POST.
  */
 
-const HOST = process.env.LANGFUSE_HOST?.replace(/\/$/, "");
-const PK = process.env.LANGFUSE_PUBLIC_KEY;
-const SK = process.env.LANGFUSE_SECRET_KEY;
-const MAX_TEXT = 8000; // per-field truncation; keeps payloads bounded
+function cfgFromEnv() {
+  return {
+    HOST: process.env.LANGFUSE_HOST?.replace(/\/$/, ""),
+    PK: process.env.LANGFUSE_PUBLIC_KEY,
+    SK: process.env.LANGFUSE_SECRET_KEY,
+    QUEUE_NAME: process.env.LANGFUSE_QUEUE_NAME || "session-review",
+    AUTO_ENQUEUE: (process.env.LANGFUSE_AUTO_ENQUEUE || "on").toLowerCase() !== "off",
+  };
+}
+
+// exported for tests
+export { cfgFromEnv };
 
 export default function (pi: ExtensionAPI) {
+  const { HOST, PK, SK, QUEUE_NAME, AUTO_ENQUEUE } = cfgFromEnv();
   if (!HOST || !PK || !SK) return;
+  const MAX_TEXT = 8000; // per-field truncation; keeps payloads bounded
+  const ENQUEUE_RETRIES = [1000, 2000, 4000, 8000, 15000, 30000];
 
   const auth = "Basic " + Buffer.from(`${PK}:${SK}`).toString("base64");
   let enabled = false;
@@ -28,6 +45,7 @@ export default function (pi: ExtensionAPI) {
   let sessionStartMs = 0;
   let turnStartMs = 0;
   let failureCount = 0;
+  let queueId: string | null = null;
 
   type Span = Record<string, unknown>;
 
@@ -135,11 +153,15 @@ export default function (pi: ExtensionAPI) {
     return undefined;
   }
 
+  // resolve queue id at session start so shutdown enqueue is immediate
+  if (AUTO_ENQUEUE) void resolveQueueId().then((id) => (queueId = id));
   pi.on("session_start", async () => {
     enabled = true;
     traceId = randHex(16);
     sessionId = `pi-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     sessionStartMs = Date.now();
+    firstPrompt = "";
+    if (AUTO_ENQUEUE) void resolveQueueId().then((id) => (queueId = id));
   });
 
   pi.on("before_agent_start", async (event) => {
@@ -212,6 +234,55 @@ export default function (pi: ExtensionAPI) {
     post(spans);
   });
 
+  // resolve the annotation queue id for QUEUE_NAME once per session; empty on miss
+  async function resolveQueueId(): Promise<string | null> {
+    try {
+      const r = await fetch(`${HOST}/api/public/annotation-queues`, { headers: { Authorization: auth } });
+      if (!r.ok) throw new Error(`http ${r.status}`);
+      const data = (await r.json()) as { data: { id: string; name: string }[] };
+      const q = data.data.find((x) => x.name === QUEUE_NAME);
+      if (!q) {
+        console.error(`[langfuse-traces] queue "${QUEUE_NAME}" not found — skipping auto-enqueue`);
+        return null;
+      }
+      return q.id;
+    } catch (e) {
+      console.error("[langfuse-traces] queue lookup failed:", e instanceof Error ? e.message : e);
+      return null;
+    }
+  }
+
+  // enqueue this session's trace for review. retries with backoff because the
+  // trace lands in langfuse's ingest pipeline asynchronously (404 until then).
+  // fire-and-forget: session shutdown must not block on this.
+  function enqueueTrace() {
+    if (!AUTO_ENQUEUE) return;
+    const objectId = id2b64(traceId); // langfuse canonical trace id form
+    const attempt = async (i: number): Promise<void> => {
+      try {
+        const r = await fetch(`${HOST}/api/public/annotation-queues/${queueId}/items`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: auth },
+          body: JSON.stringify({ objectType: "TRACE", objectId }),
+        });
+        if (r.ok) return;
+        // 400 = trace not ingested yet (or already enqueued); 404 = race as well
+        if ((r.status === 404 || r.status === 400) && i < ENQUEUE_RETRIES.length) {
+          await new Promise((res) => setTimeout(res, ENQUEUE_RETRIES[i]));
+          return attempt(i + 1);
+        }
+        throw new Error(`http ${r.status}`);
+      } catch (e) {
+        if (i < ENQUEUE_RETRIES.length && !(e instanceof TypeError)) {
+          await new Promise((res) => setTimeout(res, ENQUEUE_RETRIES[i]));
+          return attempt(i + 1);
+        }
+        console.error("[langfuse-traces] auto-enqueue failed:", e instanceof Error ? e.message : e);
+      }
+    };
+    void attempt(0);
+  }
+
   pi.on("session_shutdown", async () => {
     if (!enabled) return;
     // close-out span so the trace has a session-length root
@@ -227,6 +298,9 @@ export default function (pi: ExtensionAPI) {
         attrs: { "pi.session.id": sessionId },
       }),
     ]);
+    if (queueId) enqueueTrace();
+    else if (AUTO_ENQUEUE) void resolveQueueId().then((id) => { if (id) { queueId = id; enqueueTrace(); } });
     enabled = false;
   });
+
 }
