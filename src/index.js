@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import "dotenv/config";
+// must be installed before anything that touches discord.js — a raw ws
+// 'error' event with no listener kills the process mid-run (2026-11-03)
+import { installCrashGuard } from "./crash-guard.js";
+installCrashGuard();
 import { Client, GatewayIntentBits, Partials } from "discord.js";
 import fs from "fs";
 import path from "path";
@@ -89,6 +93,9 @@ const client = new Client({
   ],
   partials: [Partials.Message],
 });
+// belt-and-suspenders: keep the long-running client's ws errors from ever
+// surfacing as unhandled events (the crash guard above also catches them)
+client.on("error", (e) => log(`discord client ws error: ${e?.message || e}`));
 
 const getPaths = () => {
   const workingDir = process.env.DUDE_WORKING_DIR;

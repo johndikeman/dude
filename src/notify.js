@@ -113,6 +113,10 @@ export async function sendNotify({
     return null;
   }
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  // permanent error listener: without one, a ws error emitted after the
+  // `once("error")` reject fires (or after ready) crashes the whole
+  // process with an unhandled 'error' event (seen live 2026-11-03).
+  client.on("error", (e) => log(`notify: client ws error (ignored): ${e?.message || e}`));
   try {
     await loginWithTimeout(client, token, log);
     return await sendVia(client, channelId, content, log);
@@ -128,10 +132,12 @@ export async function sendNotify({
 
 async function loginWithTimeout(client, token, log) {
   const ready = new Promise((resolve, reject) => {
-    const t = setTimeout(
-      () => reject(new Error("notify: discord login timed out")),
-      LAZY_LOGIN_TIMEOUT_MS,
-    );
+    const t = setTimeout(() => {
+      // destroy the client so the abandoned ws handshake can't error out
+      // later on an orphaned socket (crash cause, 2026-11-03)
+      client.destroy().catch(() => {});
+      reject(new Error("notify: discord login timed out"));
+    }, LAZY_LOGIN_TIMEOUT_MS);
     client.once("clientReady", () => {
       clearTimeout(t);
       resolve();
