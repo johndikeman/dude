@@ -185,22 +185,31 @@
 
               # transient obsidian server errors (e.g. HTTP 504) can fail the
               # login and blow up the deploy health check. retry a few times
-              # with backoff to ride out the transiency.
+              # with backoff to ride out the transiency. each attempt is
+              # hard-capped with `timeout 60` so the whole ExecStartPre is
+              # bounded to ~4*60s + 3*30s = 330s worst case — it MUST fit
+              # inside the consuming units' TimeoutStartSec (7min), otherwise
+              # an obsidian outage crash-loops the services via systemd's
+              # start-pre timeout (2026-11-06: a 504-ing obsidian auth server
+              # made each attempt hang 60-80s; 5 attempts + 15s backoff
+              # exceeded the default 90s TimeoutStartSec, dude-agent-watch
+              # never became active and every deploy rolled back).
               attempt=1
-              max_attempts=5
+              max_attempts=4
               while [ "$attempt" -le "$max_attempts" ]; do
-                ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
-                  ${pkgs.bash}/bin/bash -c '
-                    ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob login \
-                      --email="$OB_EMAIL" --password="$OB_PASSWORD"
-                  '
+                ${pkgs.coreutils}/bin/timeout 60 \
+                  ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
+                    ${pkgs.bash}/bin/bash -c '
+                      ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob login \
+                        --email="$OB_EMAIL" --password="$OB_PASSWORD"
+                    '
                 status=$?
                 if [ "$status" -eq 0 ]; then
                   exit 0
                 fi
                 if [ "$attempt" -lt "$max_attempts" ]; then
-                  echo "ob login attempt $attempt failed (exit $status), retrying in 15s..." >&2
-                  sleep 15
+                  echo "ob login attempt $attempt failed (exit $status), retrying in 30s..." >&2
+                  sleep 30
                 fi
                 attempt=$((attempt + 1))
               done
@@ -494,8 +503,17 @@
                   timeoutSecs = 300;
                 in
                 lib.optionalString (servicesToCheck != [ ]) ''
+                  # $2 = "hard" | "soft". hard: failure aborts the deploy
+                  # (deploy-rs magic-rollback). soft: log + continue —
+                  # obsidian-sync services hard-depend on the obsidian auth
+                  # server and crash-loop during an outage; that must not
+                  # block deploys (2026-11-06: a 504-ing obsidian auth server
+                  # kept dude-agent-watch from starting and every deploy
+                  # rolled back). dude-agent-watch stays hard — with the
+                  # graceful "-"-prefixed ob-login ExecStartPre it starts
+                  # even during an outage.
                   check_service() {
-                    local svc="$1"
+                    local svc="$1" hard="$2"
                     echo "Waiting for $svc to become active..."
                     for i in $(seq 1 ${toString (timeoutSecs / 5)}); do
                       if /usr/bin/systemctl --user is-active --quiet "$svc"; then
@@ -504,19 +522,31 @@
                       fi
                       sleep 5
                     done
-                    echo "ERROR: $svc failed to become active within ${toString timeoutSecs}s" >&2
                     /usr/bin/systemctl --user status "$svc" --no-pager -l >&2 || true
+                    if [ "$hard" != "hard" ]; then
+                      echo "WARN: $svc failed to become active within ${toString timeoutSecs}s — continuing deploy (soft check)" >&2
+                      return 0
+                    fi
+                    echo "ERROR: $svc failed to become active within ${toString timeoutSecs}s" >&2
                     return 1
                   }
 
                   # Reset any rate-limit/failed state so we get a clean start.
+                  # "|| true" on start: the activation script runs under
+                  # set -e, and a synchronous start failure (e.g. start-pre
+                  # timeout) would otherwise abort before the check loop
+                  # reports anything useful.
                   ${lib.concatMapStringsSep "\n" (svc: ''
                     ${systemctl} reset-failed ${svc} 2>/dev/null || true
-                    ${systemctl} start ${svc}
+                    ${systemctl} start ${svc} || true
                   '') servicesToCheck}
 
                   ${lib.concatMapStringsSep "\n" (svc: ''
-                    check_service ${svc}
+                    if [[ "${svc}" == dude-agent-watch.service ]]; then
+                      check_service ${svc} hard
+                    else
+                      check_service ${svc} soft
+                    fi
                   '') servicesToCheck}
                 ''
               );
@@ -551,7 +581,10 @@
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.workingDirectory}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianDir}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.piSessionDir}"
-                    "${obLoginScript}"
+                    # graceful: the agent run degrades at runtime (vault ops
+                    # fail, everything else proceeds) instead of not starting
+                    # at all when obsidian auth is having an outage
+                    "-${obLoginScript}"
                   ]
                   ++
                     lib.optional (cfg.obsidianSync.enable && !cfg.obsidianSync.separateService)
@@ -568,6 +601,10 @@
                     "-${cfg.workingDirectory}/.env"
                     "-${cfg.configDirectory}/.env"
                   ];
+                  # must exceed the bounded ob-login retry loop (see
+                  # obLoginScript: ~330s worst case), or an obsidian outage
+                  # trips the start-pre timeout instead of failing gracefully
+                  TimeoutStartSec = "7min";
                   # grace window so the agent's SIGTERM handler can mark the
                   # session + write a resume breadcrumb before SIGKILL
                   TimeoutStopSec = "90s";
@@ -597,7 +634,10 @@
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.workingDirectory}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianDir}"
                     "${pkgs.coreutils}/bin/mkdir -p ${cfg.piSessionDir}"
-                    "${obLoginScript}"
+                    # graceful ("-" prefix): the discord watcher must be able
+                    # to start during an obsidian auth outage; vault ops in
+                    # triggered runs fail at runtime instead (2026-11-06)
+                    "-${obLoginScript}"
                   ];
                   ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ${cfg.package}/bin/dude-agent";
                   Restart = "always";
@@ -607,6 +647,10 @@
                     "-${cfg.workingDirectory}/.env"
                     "-${cfg.configDirectory}/.env"
                   ];
+                  # must exceed the bounded ob-login retry loop (see
+                  # obLoginScript: ~330s worst case), or an obsidian outage
+                  # trips the start-pre timeout instead of failing gracefully
+                  TimeoutStartSec = "7min";
                   # grace window for the SIGTERM handler on an in-flight
                   # discord-triggered run
                   TimeoutStopSec = "90s";
@@ -716,6 +760,12 @@
                       # stale auth token (missing RuntimeMaxSec caused the
                       # 9/28 deploy rollback saga — resilience test guards it)
                       RuntimeMaxSec = cfg.obsidianSync.runtimeMaxSec;
+                      # must exceed the bounded ob-login retry loop (see
+                      # obLoginScript: ~330s worst case). login stays a hard
+                      # failure here (sync without auth is pointless), but the
+                      # checkDudeServices health check treats this service as
+                      # soft so an obsidian outage can't block deploys
+                      TimeoutStartSec = "7min";
                       Environment = [
                         "PATH=${
                           lib.makeBinPath [
@@ -852,6 +902,10 @@
                         "-${cfg.workingDirectory}/.env"
                         "-${cfg.configDirectory}/.env"
                       ];
+                      # must exceed the bounded ob-login retry loop (see
+                      # obLoginScript: ~330s worst case); soft in the deploy
+                      # health check, same rationale as obsidian-sync.service
+                      TimeoutStartSec = "7min";
                     };
                     Install = {
                       WantedBy = [ "default.target" ];
