@@ -529,11 +529,17 @@
                   for svc in ${lib.concatStringsSep " " servicesToCheck}; do
                     ${systemctl} reset-failed "$svc" 2>/dev/null || true
                     newFrag=$(${systemctl} show -p FragmentPath --value "$svc" 2>/dev/null || true)
-                    if [[ "''${oldFrag[$svc]}" != "''$newFrag" ]]; then
-                      echo "Restarting $svc (unit definition changed)..."
+                    # restart when the definition changed (compensates a
+                    # reloadSystemd skip), or when the unit isn't active
+                    # anyway (revives start-limit-banned units — e.g. sync
+                    # services banned during an obsidian outage — so a
+                    # recovery deploy brings them back)
+                    if ! ${systemctl} is-active --quiet "$svc" 2>/dev/null \
+                       || [[ "''${oldFrag[$svc]}" != "''$newFrag" ]]; then
+                      echo "Restarting $svc (not active or definition changed)..."
                       ${systemctl} restart --no-block "$svc" || true
                     else
-                      echo "$svc: unit definition unchanged, not restarting"
+                      echo "$svc: active with unchanged definition, not restarting"
                     fi
                   done
 
@@ -780,8 +786,16 @@
 
                       ExecStartPre = [
                         "${pkgs.coreutils}/bin/mkdir -p ${cfg.obsidianSync.vaultPath}"
-                        "${obLoginScript}"
-                        "${ensureSyncSetupScript "main" cfg.obsidianSync.vaultPath}"
+                        # graceful ("-" prefix on BOTH pre-steps): during an
+                        # obsidian outage these fail, and a non-graceful
+                        # start-pre makes the sd-switch restart of this unit
+                        # fail, which aborts HM activation and (on rollback,
+                        # which uses the OLD units) the rollback too. failing
+                        # at runtime is fine: Restart=always + the trippable
+                        # start limit settles the loop, and checkDudeServices
+                        # treats this service as soft. (2026-11-06)
+                        "-${obLoginScript}"
+                        "-${ensureSyncSetupScript "main" cfg.obsidianSync.vaultPath}"
                       ];
                       ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync --continuous --path ${cfg.obsidianSync.vaultPath}";
                       Restart = "always";
@@ -792,10 +806,8 @@
                       # 9/28 deploy rollback saga — resilience test guards it)
                       RuntimeMaxSec = cfg.obsidianSync.runtimeMaxSec;
                       # must exceed the bounded ob-login retry loop (see
-                      # obLoginScript: ~120s worst case). login stays a hard
-                      # failure here (sync without auth is pointless), but the
-                      # checkDudeServices health check treats this service as
-                      # soft so an obsidian outage can't block deploys
+                      # obLoginScript: ~120s worst case); soft in the deploy
+                      # health check so an obsidian outage can't block deploys
                       TimeoutStartSec = "5min";
                       Environment = [
                         "PATH=${
@@ -912,8 +924,9 @@
                       Type = "simple";
                       ExecStartPre = [
                         "${pkgs.coreutils}/bin/mkdir -p ${v.path}"
-                        "${obLoginScript}"
-                        "${ensureSyncSetupScript v.name v.path}"
+                        # graceful: same rationale as obsidian-sync.service
+                        "-${obLoginScript}"
+                        "-${ensureSyncSetupScript v.name v.path}"
                       ];
                       ExecStart = "${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- ob sync --continuous --path ${v.path}";
                       Restart = "always";
