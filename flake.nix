@@ -186,18 +186,18 @@
               # transient obsidian server errors (e.g. HTTP 504) can fail the
               # login and blow up the deploy health check. retry a few times
               # with backoff to ride out the transiency. each attempt is
-              # hard-capped with `timeout 60` so the whole ExecStartPre is
-              # bounded to ~4*60s + 3*30s = 330s worst case — it MUST fit
-              # inside the consuming units' TimeoutStartSec (7min), otherwise
+              # hard-capped with `timeout 30` so the whole ExecStartPre is
+              # bounded to ~3*30s + 2*15s = 120s worst case — it MUST fit
+              # inside the consuming units' TimeoutStartSec (5min), otherwise
               # an obsidian outage crash-loops the services via systemd's
               # start-pre timeout (2026-11-06: a 504-ing obsidian auth server
               # made each attempt hang 60-80s; 5 attempts + 15s backoff
               # exceeded the default 90s TimeoutStartSec, dude-agent-watch
               # never became active and every deploy rolled back).
               attempt=1
-              max_attempts=4
+              max_attempts=3
               while [ "$attempt" -le "$max_attempts" ]; do
-                ${pkgs.coreutils}/bin/timeout 60 \
+                ${pkgs.coreutils}/bin/timeout 30 \
                   ${pkgs._1password-cli}/bin/op run --env-file ${cfg.opvarsFile} -- \
                     ${pkgs.bash}/bin/bash -c '
                       ${cfg.package}/lib/node_modules/dude-agent/node_modules/.bin/ob login \
@@ -208,8 +208,8 @@
                   exit 0
                 fi
                 if [ "$attempt" -lt "$max_attempts" ]; then
-                  echo "ob login attempt $attempt failed (exit $status), retrying in 30s..." >&2
-                  sleep 30
+                  echo "ob login attempt $attempt failed (exit $status), retrying in 15s..." >&2
+                  sleep 15
                 fi
                 attempt=$((attempt + 1))
               done
@@ -500,54 +500,72 @@
                     ++ lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService)
                       (map (v: "obsidian-sync-${v.name}.service") cfg.obsidianSync.extraVaults)
                   );
-                  timeoutSecs = 300;
+                  timeoutSecs = 180;
                 in
                 lib.optionalString (servicesToCheck != [ ]) ''
-                  # $2 = "hard" | "soft". hard: failure aborts the deploy
-                  # (deploy-rs magic-rollback). soft: log + continue —
-                  # obsidian-sync services hard-depend on the obsidian auth
-                  # server and crash-loop during an outage; that must not
-                  # block deploys (2026-11-06: a 504-ing obsidian auth server
-                  # kept dude-agent-watch from starting and every deploy
-                  # rolled back). dude-agent-watch stays hard — with the
-                  # graceful "-"-prefixed ob-login ExecStartPre it starts
-                  # even during an outage.
-                  check_service() {
-                    local svc="$1" hard="$2"
-                    echo "Waiting for $svc to become active..."
-                    for i in $(seq 1 ${toString (timeoutSecs / 5)}); do
-                      if /usr/bin/systemctl --user is-active --quiet "$svc"; then
-                        echo "$svc is active."
-                        return 0
-                      fi
-                      sleep 5
-                    done
-                    /usr/bin/systemctl --user status "$svc" --no-pager -l >&2 || true
-                    if [ "$hard" != "hard" ]; then
-                      echo "WARN: $svc failed to become active within ${toString timeoutSecs}s — continuing deploy (soft check)" >&2
-                      return 0
-                    fi
-                    echo "ERROR: $svc failed to become active within ${toString timeoutSecs}s" >&2
-                    return 1
-                  }
-
-                  # Reset any rate-limit/failed state so we get a clean start.
-                  # "|| true" on start: the activation script runs under
-                  # set -e, and a synchronous start failure (e.g. start-pre
-                  # timeout) would otherwise abort before the check loop
-                  # reports anything useful.
-                  ${lib.concatMapStringsSep "\n" (svc: ''
-                    ${systemctl} reset-failed ${svc} 2>/dev/null || true
-                    ${systemctl} start ${svc} || true
-                  '') servicesToCheck}
-
-                  ${lib.concatMapStringsSep "\n" (svc: ''
-                    if [[ "${svc}" == dude-agent-watch.service ]]; then
-                      check_service ${svc} hard
+                  # Hard vs soft: dude-agent-watch failing to become active
+                  # aborts the deploy (deploy-rs magic-rollback). obsidian-sync
+                  # services hard-depend on the obsidian auth server and can
+                  # crash-loop during an outage — that must only WARN
+                  # (2026-11-06: a 504-ing obsidian auth server failed every
+                  # deploy for ~20h).
+                  #
+                  # This hook ALSO compensates for home-manager's
+                  # reloadSystemd skipping daemon-reload + unit restarts
+                  # whenever the user manager reports anything but
+                  # running/degraded. The manager reports "starting" exactly
+                  # while a wanted unit's restart loop holds the boot
+                  # transaction open (2026-11-06: "Startup finished in
+                  # 3h47min" — every deploy during that window activated
+                  # STALE unit definitions). So: reload explicitly, restart
+                  # only units whose loaded definition actually changed, and
+                  # do it --no-block so a slow start-pre can't stall the
+                  # activation past deploy-rs' 240s confirmation window.
+                  declare -A oldFrag
+                  for svc in ${lib.concatStringsSep " " servicesToCheck}; do
+                    oldFrag[$svc]=$(${systemctl} show -p FragmentPath --value "$svc" 2>/dev/null || true)
+                  done
+                  ${systemctl} daemon-reload 2>/dev/null || true
+                  for svc in ${lib.concatStringsSep " " servicesToCheck}; do
+                    ${systemctl} reset-failed "$svc" 2>/dev/null || true
+                    newFrag=$(${systemctl} show -p FragmentPath --value "$svc" 2>/dev/null || true)
+                    if [[ "''${oldFrag[$svc]}" != "''$newFrag" ]]; then
+                      echo "Restarting $svc (unit definition changed)..."
+                      ${systemctl} restart --no-block "$svc" || true
                     else
-                      check_service ${svc} soft
+                      echo "$svc: unit definition unchanged, not restarting"
                     fi
-                  '') servicesToCheck}
+                  done
+
+                  # poll ALL services in one loop: total activation must stay
+                  # well under deploy-rs' 240s confirmation window
+                  notActive=""
+                  for i in $(seq 1 ${toString (timeoutSecs / 5)}); do
+                    notActive=""
+                    for svc in ${lib.concatStringsSep " " servicesToCheck}; do
+                      if ! /usr/bin/systemctl --user is-active --quiet "$svc"; then
+                        notActive="$notActive $svc"
+                      fi
+                    done
+                    if [[ -z "''$notActive" ]]; then
+                      echo "all dude services active."
+                      break
+                    fi
+                    sleep 5
+                  done
+                  deployFailed=""
+                  for svc in ''$notActive; do
+                    /usr/bin/systemctl --user status "$svc" --no-pager -l >&2 || true
+                    if [[ "$svc" == dude-agent-watch.service ]]; then
+                      echo "ERROR: $svc failed to become active within ${toString timeoutSecs}s" >&2
+                      deployFailed=1
+                    else
+                      echo "WARN: $svc not active after ${toString timeoutSecs}s — continuing deploy (soft check)" >&2
+                    fi
+                  done
+                  if [[ "''${deployFailed:-}" == "1" ]]; then
+                    exit 1
+                  fi
                 ''
               );
 
@@ -564,8 +582,16 @@
                   Wants = lib.optional (
                     cfg.obsidianSync.enable && cfg.obsidianSync.separateService
                   ) "obsidian-sync.service";
-                  StartLimitBurst = "5";
-                  StartLimitIntervalSec = "120s";
+                  StartLimitBurst = "3";
+                  # a crash-looping wanted unit holds the user manager's boot
+                  # transaction open forever if the restart cycles never trip
+                  # the limit (2026-11-06: watch start-pre timeouts every
+                  # ~100s during an obsidian outage kept the manager in
+                  # "starting" for 3h47m, which made HM's reloadSystemd skip
+                  # daemon-reload and every deploy activate stale units).
+                  # 3 starts in 20min = ban -> unit settles -> boot completes.
+                  # checkDudeServices reset-failed + restarts revive it.
+                  StartLimitIntervalSec = "20min";
                 };
                 # Type=simple, not oneshot: oneshot makes `systemctl start`
                 # block until the whole agent cycle finishes, and home-manager
@@ -602,9 +628,9 @@
                     "-${cfg.configDirectory}/.env"
                   ];
                   # must exceed the bounded ob-login retry loop (see
-                  # obLoginScript: ~330s worst case), or an obsidian outage
+                  # obLoginScript: ~120s worst case), or an obsidian outage
                   # trips the start-pre timeout instead of failing gracefully
-                  TimeoutStartSec = "7min";
+                  TimeoutStartSec = "5min";
                   # grace window so the agent's SIGTERM handler can mark the
                   # session + write a resume breadcrumb before SIGKILL
                   TimeoutStopSec = "90s";
@@ -623,8 +649,11 @@
                   Wants = lib.optional (
                     cfg.obsidianSync.enable && cfg.obsidianSync.separateService
                   ) "obsidian-sync.service";
-                  StartLimitBurst = "5";
-                  StartLimitIntervalSec = "120s";
+                  # same start-limit rationale as dude-agent.service: a
+                  # crash-looping watcher must eventually settle so the user
+                  # manager's boot transaction can complete
+                  StartLimitBurst = "3";
+                  StartLimitIntervalSec = "20min";
                 };
                 Service = {
                   Type = "simple";
@@ -648,9 +677,9 @@
                     "-${cfg.configDirectory}/.env"
                   ];
                   # must exceed the bounded ob-login retry loop (see
-                  # obLoginScript: ~330s worst case), or an obsidian outage
+                  # obLoginScript: ~120s worst case), or an obsidian outage
                   # trips the start-pre timeout instead of failing gracefully
-                  TimeoutStartSec = "7min";
+                  TimeoutStartSec = "5min";
                   # grace window for the SIGTERM handler on an in-flight
                   # discord-triggered run
                   TimeoutStopSec = "90s";
@@ -741,8 +770,10 @@
                     Unit = {
                       Description = "Obsidian Continuous Headless Sync";
                       After = [ "network.target" ];
-                      StartLimitBurst = "5";
-                      StartLimitIntervalSec = "120s";
+                      # see dude-agent.service: crash loops must settle so the
+                      # user manager can finish booting during an outage
+                      StartLimitBurst = "3";
+                      StartLimitIntervalSec = "20min";
                     };
                     Service = {
                       Type = "simple";
@@ -761,11 +792,11 @@
                       # 9/28 deploy rollback saga — resilience test guards it)
                       RuntimeMaxSec = cfg.obsidianSync.runtimeMaxSec;
                       # must exceed the bounded ob-login retry loop (see
-                      # obLoginScript: ~330s worst case). login stays a hard
+                      # obLoginScript: ~120s worst case). login stays a hard
                       # failure here (sync without auth is pointless), but the
                       # checkDudeServices health check treats this service as
                       # soft so an obsidian outage can't block deploys
-                      TimeoutStartSec = "7min";
+                      TimeoutStartSec = "5min";
                       Environment = [
                         "PATH=${
                           lib.makeBinPath [
@@ -872,8 +903,10 @@
                     Unit = {
                       Description = "Obsidian Continuous Headless Sync (${v.name})";
                       After = [ "network.target" ];
-                      StartLimitBurst = "5";
-                      StartLimitIntervalSec = "120s";
+                      # see dude-agent.service: crash loops must settle so the
+                      # user manager can finish booting during an outage
+                      StartLimitBurst = "3";
+                      StartLimitIntervalSec = "20min";
                     };
                     Service = {
                       Type = "simple";
@@ -903,9 +936,9 @@
                         "-${cfg.configDirectory}/.env"
                       ];
                       # must exceed the bounded ob-login retry loop (see
-                      # obLoginScript: ~330s worst case); soft in the deploy
+                      # obLoginScript: ~120s worst case); soft in the deploy
                       # health check, same rationale as obsidian-sync.service
-                      TimeoutStartSec = "7min";
+                      TimeoutStartSec = "5min";
                     };
                     Install = {
                       WantedBy = [ "default.target" ];
