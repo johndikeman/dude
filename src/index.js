@@ -48,6 +48,7 @@ import {
   diagMs as stallDiagMs,
   maxStallRetries,
   stallNudgePrompt,
+  isStallProgressEvent,
 } from "./stall-watchdog.js";
 import { buildAgentPrompt } from "./agent-prompt.js";
 import {
@@ -680,10 +681,27 @@ async function runCycle(message = null, sessionFileToResume = null) {
 
   // https://github.com/earendil-works/pi/blob/74786a748f5314cc2127ebbcfa2d732e9b8433f5/packages/coding-agent/src/core/agent-session.ts#L143
   session.subscribe(async (event) => {
-    // every agent event is watchdog activity; tool execution events
-    // additionally pause the stall clock while a tool runs
+    // every agent event is watchdog activity EXCEPT provider auto-retry
+    // events: a retry with exponential backoff is NOT progress (incident
+    // 2026-11-06, session 01a1b2d2: a flapping llm connection retried for
+    // ~25min; every auto_retry_start fed the watchdog and reset the idle
+    // clock, so the stall guard never fired and the run died with the
+    // session mid-task). log retries loudly instead so post-mortems have
+    // data — this run produced zero diagnostics between 15:56 and exit.
     try {
-      watchdog.feed(event.type);
+      if (isStallProgressEvent(event.type)) {
+        watchdog.feed(event.type);
+      } else if (event.type === "auto_retry_start") {
+        log(
+          `provider auto-retry attempt ${event.attempt}/${event.maxAttempts} ` +
+            `in ${Math.round((event.delayMs || 0) / 1000)}s: ${(event.errorMessage || "unknown").slice(0, 200)} ` +
+            `(not feeding stall watchdog — backoff counts as idle)`,
+        );
+      } else if (event.type === "auto_retry_end") {
+        log(
+          `provider auto-retry ended attempt ${event.attempt}: ${event.success ? "success" : `failed: ${(event.finalError || "unknown").slice(0, 200)}`}`,
+        );
+      }
     } catch {
       /* watchdog must never break the event pipeline */
     }

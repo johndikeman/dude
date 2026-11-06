@@ -83,6 +83,39 @@ await Promise.all([
     assert.strictEqual(r.code, 1, `expected exit 1, got ${r.code}: ${out(r)}`);
   }),
 
+  test("survives a TLS connect error from node:internal/tls (undici-style)", async () => {
+    // incident 2026-11-06: hung llm request surfaced as uncaughtException
+    // with only node-internal stack frames; killed a mid-task run.
+    const r = await runChild(`
+      ${GUARD}
+      setTimeout(() => {
+        const e = new Error("Client network socket disconnected before secure TLS connection was established");
+        e.stack = "Error: Client network socket disconnected before secure TLS connection was established\\n    at TLSSocket.onConnectEnd (node:internal/tls/wrap:1820:19)\\n    at TLSSocket.emit (node:events:521:24)";
+        throw e;
+      }, 10);
+      setTimeout(() => { console.log("STILL_ALIVE"); process.exit(0); }, 150);
+    `);
+    assert.strictEqual(r.code, 0, `exit ${r.code}: ${r.out}`);
+    assert.ok(r.out.includes("swallowed transient network"), `no swallow log: ${r.out}`);
+    assert.ok(r.out.includes("STILL_ALIVE"), `process died: ${r.out}`);
+  }),
+
+  test("swallow cap: >10 transient errors in 60s window becomes fatal", async () => {
+    const r = await runChild(`
+      ${GUARD}
+      let n = 0;
+      const timer = setInterval(() => {
+        const e = new Error("read ECONNRESET");
+        e.stack = "Error: read ECONNRESET\\n    at (/x/node_modules/ws/lib/websocket.js:1:1)";
+        throw e; // uncaughtException — guard must swallow the first 10
+      }, 20);
+      setTimeout(() => { console.log("NO_FATAL"); process.exit(0); }, 600);
+    `);
+    // 20ms interval over 600ms ≈ 30 throws → cap exceeded → exit 1
+    assert.strictEqual(r.code, 1, `expected fatal after cap, got exit ${r.code}: ${r.out}`);
+    assert.ok(r.out.includes("transient errors in"), `no cap log: ${r.out}`);
+  }),
+
   test("installCrashGuard is idempotent (double install ok)", async () => {
     const r = await runChild(`
       ${GUARD}

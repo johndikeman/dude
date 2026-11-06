@@ -176,6 +176,22 @@ export function createStallWatchdog({
   };
 }
 
+/** event types that do NOT count as real progress for the stall watchdog.
+ *
+ * auto_retry_start/end: pi's provider-level retry emits these between
+ * attempts during exponential backoff. counting them as activity made the
+ * watchdog blind to a flapping llm connection that retried (and never
+ * streamed real output) for 25+ minutes — incident 2026-11-06, session
+ * 01a1b2d2. during a retry there's no new model output, so backoff waits
+ * count as idle and the watchdog can abort a wedged retry loop.
+ */
+export const NON_PROGRESS_EVENTS = new Set(["auto_retry_start", "auto_retry_end"]);
+
+/** true when this event type should feed the stall watchdog's idle clock */
+export function isStallProgressEvent(eventType) {
+  return !NON_PROGRESS_EVENTS.has(eventType);
+}
+
 /** nudge prompt sent after a stall-abort, telling the model to continue */
 export function stallNudgePrompt(attempt, { idleMs, idleSince } = {}) {
   return (

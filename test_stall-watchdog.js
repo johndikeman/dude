@@ -17,6 +17,8 @@ import {
   diagMs,
   createStallWatchdog,
   stallNudgePrompt,
+  isStallProgressEvent,
+  NON_PROGRESS_EVENTS,
 } from "./src/stall-watchdog.js";
 
 /** minimal fake clock + timer harness: deterministic, no real waiting */
@@ -231,6 +233,38 @@ test("a throwing onStall handler doesn't kill the watchdog or the caller", () =>
   assert.ok(logs.length >= 2);
   const last = logs[logs.length - 1];
   assert.match(last, /onStall handler threw/);
+});
+
+// regression: incident 2026-11-06 (session 01a1b2d2) — a flapping llm
+// connection retried with exponential backoff for ~25min; every
+// auto_retry_start fed the watchdog and reset the idle clock, so the
+// stall guard never fired and the run died mid-task. retry events are
+// NOT progress: the idle clock must keep running through backoff.
+test("isStallProgressEvent excludes auto_retry events", () => {
+  assert.equal(isStallProgressEvent("auto_retry_start"), false);
+  assert.equal(isStallProgressEvent("auto_retry_end"), false);
+  assert.equal(isStallProgressEvent("message_start"), true);
+  assert.equal(isStallProgressEvent("message_update"), true);
+  assert.equal(isStallProgressEvent("tool_execution_end"), true);
+  assert.deepEqual([...NON_PROGRESS_EVENTS].sort(), ["auto_retry_end", "auto_retry_start"]);
+});
+
+test("watchdog still fires when fed only auto_retry events during backoff", () => {
+  const { clock, logs, stalls, watchdog } = makeHarness({ stallMs: 600_000, diagMs: 120_000 });
+  watchdog.feed("tool_execution_end");
+  // simulate a flapping provider: pi emits auto_retry pairs every ~5m
+  // (backoff delays grow; the pairs themselves are not progress)
+  for (let i = 0; i < 5; i++) {
+    clock.advance(300_000);
+    watchdog.feed("auto_retry_start");
+    clock.advance(30_000);
+    watchdog.feed("auto_retry_end");
+  }
+  // advance past the last retry: the idle clock kept running through
+  // all the backoff noise, so the stall fires 10m after the last event
+  clock.advance(600_000);
+  assert.equal(stalls.length, 1, `expected 1 stall fire, got ${stalls.length}; logs: ${logs.join(" | ")}`);
+  assert.ok(stalls[0].idleMs >= 600_000, `idleMs too small: ${stalls[0].idleMs}`);
 });
 
 test("stallNudgePrompt includes the diag and retry count", () => {
