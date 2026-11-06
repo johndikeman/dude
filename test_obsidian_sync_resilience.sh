@@ -62,4 +62,29 @@ if grep -qE 'ob sync-setup --vault' "$FLAKE_NIX"; then
 fi
 echo "PASS: no raw sync-setup in ExecStartPre"
 
+# check 9: each ob-login attempt is hard-capped so ExecStartPre fits inside
+# TimeoutStartSec (2026-11-06: unbounded attempts during a 504 outage tripped
+# the default 90s start-pre timeout and crash-looped dude-agent-watch)
+if ! grep -qE '\$\{pkgs\.coreutils\}/bin/timeout 60' "$FLAKE_NIX"; then
+  echo "FAIL: obLoginScript does not cap each attempt with timeout 60"
+  exit 1
+fi
+echo "PASS: obLoginScript caps each attempt with timeout 60"
+
+# check 10: dude-agent + dude-agent-watch treat ob login as graceful ("-"
+# prefix): an obsidian auth outage must not prevent them from starting
+if [ "$(grep -cE '"-\$\{obLoginScript\}"' "$FLAKE_NIX")" -lt 2 ]; then
+  echo "FAIL: dude-agent/dude-agent-watch do not use a graceful ('-' prefixed) ob-login ExecStartPre"
+  exit 1
+fi
+echo "PASS: dude-agent + dude-agent-watch use graceful ob-login"
+
+# check 11: every ob-login-consuming unit sets an explicit TimeoutStartSec
+# above the ~330s worst case of the retry loop
+if [ "$(grep -c 'TimeoutStartSec = "7min"' "$FLAKE_NIX")" -lt 4 ]; then
+  echo "FAIL: not all ob-login-consuming units set TimeoutStartSec = 7min"
+  exit 1
+fi
+echo "PASS: all ob-login-consuming units set TimeoutStartSec"
+
 echo "=== all resilience checks passed ==="

@@ -144,6 +144,14 @@ obsidian-sync-recipes (`op run -- ob sync --continuous`).
   chain in interrupted.js.
 - CI "failure" on dude main pushes where the lock was already current was
   cosmetic (`git commit` on empty index); fixed 2026-09-28.
+- 2026-11-06 deploy failures + dude-agent-watch crash loop: obsidian auth
+  server 504'd for ~20h; the unbounded ob-login retry ExecStartPre (5 ×
+  60-80s + 15s backoff) blew past systemd's default 90s TimeoutStartSec →
+  "start-pre operation timed out" → watch never active → checkDudeServices
+  failed → deploy-rs rolled back EVERY deploy. lesson: third-party auth
+  outages must degrade service startup, never block it. fixes: per-attempt
+  `timeout 60` cap, graceful "-"-prefixed login on dude-agent/watch, 7min
+  TimeoutStartSec, obsidian-sync demoted to a soft deploy health check.
 
 ## tone / house rules for future runs
 
