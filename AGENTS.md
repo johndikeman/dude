@@ -148,10 +148,17 @@ obsidian-sync-recipes (`op run -- ob sync --continuous`).
   server 504'd for ~20h; the unbounded ob-login retry ExecStartPre (5 ×
   60-80s + 15s backoff) blew past systemd's default 90s TimeoutStartSec →
   "start-pre operation timed out" → watch never active → checkDudeServices
-  failed → deploy-rs rolled back EVERY deploy. lesson: third-party auth
-  outages must degrade service startup, never block it. fixes: per-attempt
-  `timeout 60` cap, graceful "-"-prefixed login on dude-agent/watch, 7min
-  TimeoutStartSec, obsidian-sync demoted to a soft deploy health check.
+  failed → deploy-rs rolled back EVERY deploy. WORSE: the crash loop held
+  the user manager's boot transaction open (watch is WantedBy=default.target,
+  5-per-120s start limit never tripped at ~100s/cycle) so the manager sat in
+  "starting" for 3h47m, HM's reloadSystemd skipped daemon-reload (it only
+  proceeds on running/degraded) and deploys activated STALE units. deploy-rs
+  also has a hard 240s activation confirmation window — long synchronous
+  restarts inside activation blow it. fixes: per-attempt `timeout 30` cap,
+  graceful "-"-prefixed login on dude-agent/watch, 5min TimeoutStartSec,
+  trippable start limits (20min/3) so loops settle, checkDudeServices does
+  its own daemon-reload + --no-block restarts of changed units and treats
+  obsidian-sync as a soft check.
 
 ## tone / house rules for future runs
 
