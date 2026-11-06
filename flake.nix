@@ -500,7 +500,9 @@
                     ++ lib.optionals (cfg.obsidianSync.enable && cfg.obsidianSync.separateService)
                       (map (v: "obsidian-sync-${v.name}.service") cfg.obsidianSync.extraVaults)
                   );
-                  timeoutSecs = 180;
+                  timeoutSecs = 150;
+                  hardService = "dude-agent-watch.service";
+                  softServices = lib.lists.remove hardService servicesToCheck;
                 in
                 lib.optionalString (servicesToCheck != [ ]) ''
                   # Hard vs soft: dude-agent-watch failing to become active
@@ -543,35 +545,47 @@
                     fi
                   done
 
-                  # poll ALL services in one loop: total activation must stay
-                  # well under deploy-rs' 240s confirmation window
-                  notActive=""
-                  for i in $(seq 1 ${toString (timeoutSecs / 5)}); do
-                    notActive=""
-                    for svc in ${lib.concatStringsSep " " servicesToCheck}; do
+                  # deploy-rs has a hard 240s activation confirmation window
+                  # (observed exactly on 3 runs) and reloadSystemd's own
+                  # synchronous sd-switch restarts can already eat ~120s of
+                  # it (watch's bounded start-pre). so: wait for the HARD
+                  # service first — it's usually already active by the time
+                  # this hook runs — then give the soft services only a
+                  # short grace before warning. total activation stays well
+                  # under the window.
+                  hardActive=""
+                  for i in $(seq 1 30); do
+                    if /usr/bin/systemctl --user is-active --quiet "${hardService}"; then
+                      hardActive=1
+                      echo "${hardService} is active."
+                      break
+                    fi
+                    sleep 5
+                  done
+                  if [[ -z "''$hardActive" ]]; then
+                    /usr/bin/systemctl --user status "${hardService}" --no-pager -l >&2 || true
+                    echo "ERROR: ${hardService} failed to become active within 150s" >&2
+                    exit 1
+                  fi
+
+                  softBad=""
+                  for i in $(seq 1 12); do
+                    softBad=""
+                    for svc in ${lib.concatStringsSep " " softServices}; do
                       if ! /usr/bin/systemctl --user is-active --quiet "$svc"; then
-                        notActive="$notActive $svc"
+                        softBad="''$softBad $svc"
                       fi
                     done
-                    if [[ -z "''$notActive" ]]; then
+                    if [[ -z "''$softBad" ]]; then
                       echo "all dude services active."
                       break
                     fi
                     sleep 5
                   done
-                  deployFailed=""
-                  for svc in ''$notActive; do
+                  for svc in ''$softBad; do
                     /usr/bin/systemctl --user status "$svc" --no-pager -l >&2 || true
-                    if [[ "$svc" == dude-agent-watch.service ]]; then
-                      echo "ERROR: $svc failed to become active within ${toString timeoutSecs}s" >&2
-                      deployFailed=1
-                    else
-                      echo "WARN: $svc not active after ${toString timeoutSecs}s — continuing deploy (soft check)" >&2
-                    fi
+                    echo "WARN: $svc not active after grace period — continuing deploy (soft check: obsidian outage must not block deploys)" >&2
                   done
-                  if [[ "''${deployFailed:-}" == "1" ]]; then
-                    exit 1
-                  fi
                 ''
               );
 
