@@ -71,13 +71,16 @@ if ! grep -qE '\$\{pkgs\.coreutils\}/bin/timeout 30' "$FLAKE_NIX"; then
 fi
 echo "PASS: obLoginScript caps each attempt with timeout 30"
 
-# check 10: dude-agent + dude-agent-watch treat ob login as graceful ("-"
-# prefix): an obsidian auth outage must not prevent them from starting
-if [ "$(grep -cE '"-\$\{obLoginScript\}"' "$FLAKE_NIX")" -lt 2 ]; then
-  echo "FAIL: dude-agent/dude-agent-watch do not use a graceful ('-' prefixed) ob-login ExecStartPre"
+# check 10: every ob-login consumer treats login as graceful ("-"
+# prefix): an obsidian auth outage must never abort a start-pre — sd-switch
+# restarts changed units synchronously during HM activation, so a hard
+# start-pre failure there (or during deploy-rs' rollback re-activation,
+# which uses the OLD units) aborts the whole deploy
+if [ "$(grep -cE '"-\$\{obLoginScript\}"' "$FLAKE_NIX")" -lt 4 ]; then
+  echo "FAIL: not all ob-login ExecStartPre entries are graceful ('-' prefixed)"
   exit 1
 fi
-echo "PASS: dude-agent + dude-agent-watch use graceful ob-login"
+echo "PASS: all ob-login ExecStartPre entries are graceful"
 
 # check 11: every ob-login-consuming unit sets an explicit TimeoutStartSec
 # above the ~120s worst case of the retry loop

@@ -159,6 +159,12 @@ obsidian-sync-recipes (`op run -- ob sync --continuous`).
   trippable start limits (20min/3) so loops settle, checkDudeServices does
   its own daemon-reload + --no-block restarts of changed units and treats
   obsidian-sync as a soft check.
+- 2026-11-06 follow-up: sync services' ob-login/sync-setup ExecStartPre
+  must ALSO be graceful — sd-switch (HM reloadSystemd) restarts changed
+  units synchronously, and deploy-rs' rollback re-activation uses the OLD
+  units; a hard start-pre failure in either aborts the deploy even with
+  all the other fixes. graceful start-pre + runtime failure + start-limit
+  ban is the only combination that survives an outage end to end.
 
 ## tone / house rules for future runs
 
