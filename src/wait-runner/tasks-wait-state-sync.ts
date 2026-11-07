@@ -1,15 +1,16 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { syncTasksWaitState, tasksFile } from "./tasks-wait-state.js";
+import { syncAllIndexWaitState, INDEX_FILES, tasksFile } from "./tasks-wait-state.js";
 
 /**
  * tasks-wait-state-sync — pi extension that keeps wait-state.json's
- * `ai-tasks` hash current after the agent edits the task file itself.
+ * index-file checklist hashes current after the agent edits those files
+ * itself. tracks every vault index in INDEX_FILES (ai-tasks, ai-projects).
  *
  * hooks tool_execution_end for the edit/write tools; when the tool's
- * target is the task file, the checklist hash is recomputed and written to
- * the wait state file so the next wait tick doesn't see a "new" checklist
- * and re-fire the agent (self-trigger cascade). errors are logged to
- * stderr and never thrown into the agent loop.
+ * target is a tracked index file, its checklist hash is recomputed and
+ * written to the wait state file so the next wait tick doesn't see a
+ * "new" checklist and re-fire the agent (self-trigger cascade). errors
+ * are logged to stderr and never thrown into the agent loop.
  */
 export default function (pi: ExtensionAPI) {
   pi.on("tool_execution_end", async (event: any) => {
@@ -19,15 +20,21 @@ export default function (pi: ExtensionAPI) {
       // both tools take a `path` param; defensive across shapes
       const p = event?.args?.path ?? event?.input?.path;
       if (!p) return;
-      if (String(p) !== tasksFile()) return;
-      const r = syncTasksWaitState();
-      if (r.updated) {
-        console.error(`[tasks-wait-state] synced ai-tasks hash after ${name} of ${p}`);
+      const tracked = INDEX_FILES.some(({ file }) => String(p) === file());
+      if (!tracked) return;
+      const results = syncAllIndexWaitState();
+      const mine = results.find((r) => r.file === String(p));
+      if (mine?.updated) {
+        console.error(`[tasks-wait-state] synced ${mine.key} hash after ${name} of ${p}`);
       } else {
-        console.error(`[tasks-wait-state] task file unreadable after ${name} of ${p}; nothing to sync`);
+        console.error(`[tasks-wait-state] index file unreadable after ${name} of ${p}; nothing to sync`);
       }
     } catch (err: any) {
       console.error(`[tasks-wait-state] sync failed: ${err?.message ?? err}`);
     }
   });
 }
+
+// keep the old named export referenced so tree-shaking doesn't complain and
+// direct imports (tests) still work.
+export { tasksFile };

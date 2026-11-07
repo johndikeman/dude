@@ -35,7 +35,22 @@ repos:
 | `agent-prompt.js` | builds the system prompt. full template (task processing) vs trimmed template (`trimBasePrompt: true` — purpose runs must not triage the task file; that's deliberate, task-file edits by purposes re-trigger the wait runner). |
 
 purposes (`src/purposes/`): `prediction-markets.js` (LLM half of pm agent),
-`meal-planner.js` (weekly dinner planning). both `trimBasePrompt: true`.
+`meal-planner.js` (weekly dinner planning), `eng-orchestrator.js` (staged
+engineering pipeline — see below). all `trimBasePrompt: true`.
+
+## engineering pipeline (ai-projects)
+
+larger engineering projects use a staged pipeline, separate from ai-tasks:
+index file `~/vault/ai-projects.md` (wait function `wait-functions/ai-projects.js`
+fires `eng-orchestrator` on checklist change), project docs in
+`~/vault/projects/<name>.md` hold the pipeline state + artifacts (design,
+test plan). stage runs (gather → testing-design → implement → test) are
+detached `dude-agent --once --purpose eng-orchestrator --context
+"project=<name> stage=<stage>"` invocations; standing orders in
+`.pi/skills/engineering-task/SKILL.md`. PRD + test-plan need explicit john
+sign-off before implementation. the tasks-wait-state-sync extension
+re-baselines BOTH index files (INDEX_FILES in tasks-wait-state.js) after
+self-edits.
 
 ## run lifecycle
 

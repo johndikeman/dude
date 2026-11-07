@@ -51,6 +51,23 @@ export function tasksFile() {
   return path.resolve(defaultTasksFile());
 }
 
+// self-contained copy of ai-projects.js's defaultProjectsFile
+function defaultProjectsFile() {
+  const vaultDir = process.env.OBSIDIAN_DIR || `${process.env.HOME}/vault`;
+  return process.env.DUDE_PROJECTS_FILE || `${vaultDir}/ai-projects.md`;
+}
+
+/**
+ * vault index files whose checklist hashes live in wait-state.json, and the
+ * state key for each. the sync extension checks every file here after an
+ * edit/write so ANY self-edited index (ai-tasks AND ai-projects) is
+ * re-baselined before the next wait tick.
+ */
+export const INDEX_FILES = [
+  { key: "ai-tasks", file: () => path.resolve(defaultTasksFile()) },
+  { key: "ai-projects", file: () => path.resolve(defaultProjectsFile()) },
+];
+
 /**
  * recompute the checklist hash of the task file and write it into the
  * `ai-tasks` entry of wait-state.json. returns { updated, hash, stateFile }
@@ -67,8 +84,25 @@ export function syncTasksWaitState({ tasksFile: file = tasksFile(), stateFile = 
   return { updated: true, hash, ...writeTasksHash(hash, stateFile) };
 }
 
-/** write a hash into the ai-tasks slot of wait-state.json, preserving other keys */
-export function writeTasksHash(hash, stateFile = defaultStateFile()) {
+/**
+ * sync ALL tracked index files (see INDEX_FILES) after an agent edit.
+ * returns the list of { key, file, updated } results for logging.
+ */
+export function syncAllIndexWaitState({ stateFile = defaultStateFile() } = {}) {
+  return INDEX_FILES.map(({ key, file }) => {
+    let hash;
+    try {
+      hash = checklistHash(fs.readFileSync(file(), "utf8"));
+    } catch {
+      return { key, file: file(), updated: false };
+    }
+    writeTasksHash(hash, stateFile, key);
+    return { key, file: file(), updated: true };
+  });
+}
+
+/** write a hash into the given slot (default `ai-tasks`) of wait-state.json, preserving other keys */
+export function writeTasksHash(hash, stateFile = defaultStateFile(), key = "ai-tasks") {
   let state = {};
   try {
     state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
@@ -76,7 +110,7 @@ export function writeTasksHash(hash, stateFile = defaultStateFile()) {
     /* missing/corrupt state file: start fresh, preserving nothing */
   }
   if (!state || typeof state !== "object" || Array.isArray(state)) state = {};
-  state["ai-tasks"] = hash;
+  state[key] = hash;
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
   const tmp = `${stateFile}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
