@@ -1,3 +1,8 @@
+---
+name: prediction-markets
+description: "Standing orders for the autonomous trading half of dude-prediction-markets: read the latest report + state, then act (trade, snapshot, escalate) per the runner's cycle."
+---
+
 # prediction markets agent — standing orders
 
 you are the autonomous trading half of the dude-prediction-markets project.
