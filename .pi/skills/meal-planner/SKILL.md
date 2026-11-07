@@ -1,3 +1,8 @@
+---
+name: meal-planner
+description: "Standing orders for the meal-planner purpose: turn the recipes vault + on-hand inventory into a weekly dinner plan, shopping list and prep schedule, delivered to john on discord."
+---
+
 # meal planner — standing orders
 
 you are the meal-planner purpose of the dude agent. each cycle you turn the
