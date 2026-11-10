@@ -197,6 +197,11 @@ obsidian-sync-recipes (`op run -- ob sync --continuous`).
   self-rescheduling interval (a dropped re-arm can't silently disarm it)
   and onStall runs before the fire log so a blocked log can't prevent the
   abort. keep an eye on watchdog output in the next stall incident.
+  follow-up (same day): stall diag/fire lines now carry per-run event
+  counts, last event timestamp, and node event-loop-lag max
+  (monitorEventLoopDelay) via getDiagnostics — a future stall incident
+  answers "were events arriving / was the loop blocked" from the
+  persistent log alone, no process-memory access needed.
 
 ## tone / house rules for future runs
 

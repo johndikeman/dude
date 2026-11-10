@@ -74,6 +74,14 @@ function fmtMs(ms) {
  * diagnose/ notes). the tick is now a real interval: libuv keeps firing
  * it every diagMs no matter what any single callback does, so the
  * watchdog cannot be silently disarmed by a missed re-arm.
+ *
+ * observability (2026-11-10): the 2026-11-09 stall's root cause stayed
+ * open because the decisive facts — was the timer armed, were events
+ * still arriving, was the node event loop blocked — lived only in
+ * process memory and died with the crash. the watchdog now takes a
+ * `getDiagnostics` callback whose output is appended to every diag/fire
+ * line and included in the onStall payload, so one stall incident
+ * answers those questions from the persistent log alone.
  */
 export function createStallWatchdog({
   stallMs: stallThreshold = stallMs(),
@@ -85,6 +93,7 @@ export function createStallWatchdog({
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
   nowFn = () => Date.now(),
+  getDiagnostics = null,
 } = {}) {
   if (stallThreshold == null || stallThreshold <= 0) {
     return {
@@ -121,6 +130,12 @@ export function createStallWatchdog({
     if (stopped) return;
     const now = nowFn();
     const idle = now - lastActivityAt;
+    let extras = "";
+    try {
+      extras = getDiagnostics ? ` ${getDiagnostics()}` : "";
+    } catch (e) {
+      extras = ` diagnostics-failed: ${e?.message || e}`;
+    }
     // an in-flight tool is legitimate silence — don't diag or fire,
     // just look again after another interval
     if (toolDepth > 0) {
@@ -128,23 +143,31 @@ export function createStallWatchdog({
     }
     if (idle >= stallThreshold) {
       stallCount += 1;
+      let diag = {
+        idleMs: idle,
+        lastEventType,
+        stallCount,
+        idleSince: new Date(lastActivityAt).toISOString(),
+      };
+      if (getDiagnostics) {
+        try {
+          diag.eventLoopLagAndEventCounts = getDiagnostics();
+        } catch {
+          /* extras already best-effort */
+        }
+      }
       // abort FIRST, log after: a slow/blocking log call must never
       // prevent the recovery abort from happening (the 2026-11-09
       // session showed timer-callback log paths can wedge).
       try {
-        onStall({
-          idleMs: idle,
-          lastEventType,
-          stallCount,
-          idleSince: new Date(lastActivityAt).toISOString(),
-        });
+        onStall(diag);
       } catch (e) {
         log(`llm stall watchdog: onStall handler threw: ${e?.stack || e?.message || e}`);
       }
       log(
         `llm stall watchdog: fired after ${fmtMs(idle)} with no agent activity ` +
           `(last event: ${lastEventType} at ${new Date(lastActivityAt).toISOString()}; ` +
-          `toolDepth=${toolDepth}; stalls this run=${stallCount}); aborting session so the hung request is killed and the run can be nudged`,
+          `toolDepth=${toolDepth}; stalls this run=${stallCount})${extras}; aborting session so the hung request is killed and the run can be nudged`,
       );
       // stop watching until the recovery path feeds/resets us
       unschedule();
@@ -154,7 +177,7 @@ export function createStallWatchdog({
       lastDiagAt = now;
       log(
         `llm stall watchdog: no agent activity for ${fmtMs(idle)} ` +
-          `(last event: ${lastEventType}; toolDepth=${toolDepth}; abort at ${fmtMs(stallThreshold - idle)})`,
+          `(last event: ${lastEventType}; toolDepth=${toolDepth}; abort at ${fmtMs(stallThreshold - idle)})${extras}`,
       );
     }
   }
