@@ -29,18 +29,20 @@ two modes, decided by the --context you were given:
 
 1. SUPERVISOR (no \`stage=\` in context): scan ~/vault/ai-projects.md, pick
    the project(s) whose next pipeline stage is due, and launch ONE stage run
-   per project as a detached systemd-run unit:
-     systemd-run --user --collect --quiet --unit=dude-eng-<project>-<stage> \\
-       --property=SuccessExitStatus=75 --property=RuntimeMaxSec=14400 \\
-       dude-agent --once --purpose eng-orchestrator \\
-       --context "project=<name> stage=<next-stage>"
-   (forward the environment the same way the wait runner does: pass
-   --setenv only if needed; dude-agent resolves its own env.) after
-   launching, verify the unit started, note the dispatch in the project
-   doc's log, and post a one-line status to discord. do NOT do stage work
-   yourself in supervisor mode. if a project needs john (sign-off, blocking
-   question, 2x failed test loops, scope creep, money/prod), say so on
-   discord with a ping and STOP that project — do not loop.
+   per project by writing the dispatch to the pending-stage file:
+     echo '{"project": "<name>", "stage": "<next-stage>"}' > \\
+       ~/.config/dude/pending-stage.json
+   (NEVER hand-roll systemd-run commands yourself — the wait-runner tick
+   picks this file up and launches the stage through the same robust
+   detached-spawn path as every wait-fired run: env forwarding, current
+   build, lock handling. hand-rolled systemd-run broke stage runs twice:
+   stale build = "unknown purpose", and missing env = instant crash.
+   see the 2026-11-08 offgridusb-parallel incident.)
+   note the dispatch in the project doc's log, and post a one-line status
+   to discord. do NOT do stage work yourself in supervisor mode. if a
+   project needs john (sign-off, blocking question, 2x failed test loops,
+   scope creep, money/prod), say so on discord with a ping and STOP that
+   project — do not loop.
 
 2. STAGE RUN (\`project=<name> stage=<stage>\` in context): open that
    project's doc, read the objective and current state, then execute

@@ -320,6 +320,83 @@ export function restoreWaitFunctionState(name, priorState, { dir, stateFile } = 
   saveState(statePath, state);
 }
 
+/* ------------------------------------------------------------------ */
+/* pending stage dispatch — the eng-orchestrator's stage runs.        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * the eng-orchestrator (a model-driven agent) used to hand-roll systemd-run
+ * commands to launch stage runs. that was fragile: (a) systemd-run units
+ * inherit NOTHING, so the stage run crashed on missing env (OBSIDIAN_DIR,
+ * DUDE_CONFIG_DIR — seen live 2026-11-08); (b) `dude-agent` from PATH
+ * / hardcoded nix store paths go stale across deploys, so the stage run
+ * loaded an OLD build and died with "unknown purpose" (seen live 2026-11-08
+ * 20:32: the offgridusb-parallel testing-design stage never ran and the
+ * pipeline was stuck). instead the orchestrator now WRITES a pending-stage
+ * file and the wait-runner tick (this tick, same process as regular wait
+ * functions) dispatches it through the same robust spawnDetachedAgent path
+ * used for every wait-fired run: env forwarding, current build, lock
+ * semantics (skipped when an agent is in flight, re-fired next tick).
+ */
+
+export function defaultPendingStageFile() {
+  return process.env.DUDE_PENDING_STAGE_FILE ||
+    path.join(
+      process.env.DUDE_CONFIG_DIR || path.join(process.env.HOME || "/tmp", ".config/dude"),
+      "pending-stage.json",
+    );
+}
+
+export function readPendingStage(file = defaultPendingStageFile()) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object") return null;
+    const { project, stage } = parsed;
+    if (typeof project !== "string" || !project.trim()) return null;
+    if (typeof stage !== "string" || !stage.trim()) return null;
+    return { project: project.trim(), stage: stage.trim() };
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingStage(file = defaultPendingStageFile()) {
+  try { fs.unlinkSync(file); } catch { /* already gone */ }
+}
+
+/** systemd-safe unit name for a stage run */
+export function stageUnitName(project, stage) {
+  return `dude-eng-${project}-${stage}`.replace(/[^a-zA-Z0-9_.-]/g, "-");
+}
+
+/**
+ * dispatch a stage run written by the eng-orchestrator. fires only when
+ * no agent is running (same busyCheck as wait functions); the orchestrator
+ * re-fires via the ai-projects wait function on the next tick otherwise.
+ * on successful spawn, clears the pending file and logs the dispatch.
+ */
+export async function dispatchPendingStage({ stateFile, spawnFn } = {}) {
+  const stage = readPendingStage();
+  if (!stage) return null;
+  if (isAgentRunning()) {
+    return { dispatched: false, skippedBusy: true, project: stage.project, stage: stage.stage };
+  }
+  const agentEntry = fileURLToPath(new URL("./index.js", import.meta.url));
+  const args = [
+    agentEntry, "--once", "--purpose", "eng-orchestrator",
+    "--context", `project=${stage.project} stage=${stage.stage}`,
+  ];
+  const unit = stageUnitName(stage.project, stage.stage);
+  const detached = await spawnDetachedAgent({ args, unit, spawnFn });
+  if (!detached.ok) {
+    console.error(`[wait] stage dispatch failed (${detached.error}); keeping pending file for retry`);
+    return { dispatched: false, error: detached.error, project: stage.project, stage: stage.stage };
+  }
+  clearPendingStage();
+  console.error(`[wait] stage dispatch: ${unit} started`);
+  return { dispatched: true, unit, project: stage.project, stage: stage.stage };
+}
+
 /** cli-visible env override: DUDE_WAIT_DETACH=off forces synchronous spawns */
 export function detachEnabled() {
   if (process.env.DUDE_WAIT_DETACH === "off") return false;
@@ -586,6 +663,10 @@ export async function main(argv = process.argv.slice(2)) {
     // checking functions (their outcomes affect whether things re-fire)
     if (invoke) {
       await processPendingRebaselines({});
+      // stage runs queued by the eng-orchestrator (pending-stage file)
+      // go through the same robust detached spawn as wait-fired runs
+      const stage = await dispatchPendingStage({});
+      if (stage?.skippedBusy) console.error(`[wait] stage dispatch ${stage.project}/${stage.stage}: skipped (agent run in progress; will re-fire next tick)`);
     }
     const results = await runAllWaitFunctions({ invoke });
     for (const r of results) {
