@@ -32,6 +32,7 @@ import {
   loopBreakPrompt,
 } from "./loop-detect.js";
 import { pathToFileURL } from "url";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { loadPurpose, parsePurposeArgs } from "./purpose.js";
 import { resolveDefaultSkillPaths } from "./default-skills.js";
 import { sendNotify, startedMessage, finishedMessage } from "./notify.js";
@@ -143,6 +144,8 @@ let stallRetries = 0;
 let stallAbortPending = false; // watchdog fired; waiting for the abort to settle
 let lastStallDiag = null; // verbose diag payload from the most recent stall fire
 let stopStallWatchdog = null;
+// per-run event-loop delay monitor (stall diagnostics); stopped on run end
+let stopLoopMonitor = null;
 let currentRunningTask = null;
 let pausedTaskInfo = null; // Store info about paused tasks for status display
 let lastRunHitQuotaLimit = false;
@@ -174,6 +177,15 @@ function releaseLockAndStopCap() {
       /* nothing */
     }
     stopStallWatchdog = null;
+  }
+  // stop the per-run event-loop delay monitor (stall diagnostics)
+  if (stopLoopMonitor) {
+    try {
+      stopLoopMonitor();
+    } catch {
+      /* nothing */
+    }
+    stopLoopMonitor = null;
   }
   clearAgentStatus(client, log);
   // scheduled runs hold a persistent presence client (see
@@ -643,10 +655,32 @@ async function runCycle(message = null, sessionFileToResume = null) {
     try { stopStallWatchdog(); } catch { /* nothing */ }
     stopStallWatchdog = null;
   }
+  // stall diagnostics: the 2026-11-09 incident's root cause stayed open
+  // because the decisive facts (were events still arriving? was the node
+  // event loop blocked?) died with the crashed process. record them
+  // per-run so every watchdog diag/fire line answers those questions
+  // from the persistent log alone.
+  const eventCounts = {};
+  let lastEventAt = null;
+  const loopDelay = monitorEventLoopDelay({ resolution: 200 });
+  loopDelay.enable();
+  if (stopLoopMonitor) {
+    try { stopLoopMonitor(); } catch { /* nothing */ }
+  }
+  stopLoopMonitor = () => loopDelay.disable();
+  const stallDiagnostics = () => {
+    const lagMs = Math.round(loopDelay.max / 1e6);
+    return (
+      `events=${JSON.stringify(eventCounts)} ` +
+      `lastEventAt=${lastEventAt ?? "none"} ` +
+      `loopLagMax=${lagMs}ms`
+    );
+  };
   const watchdog = createStallWatchdog({
     stallMs: stallWatchdogMs(),
     diagMs: stallDiagMs(),
     log,
+    getDiagnostics: stallDiagnostics,
     onStall: (diag) => {
       if (!isRunning) return; // run already ending; abort race
       stallAbortPending = true;
@@ -682,6 +716,9 @@ async function runCycle(message = null, sessionFileToResume = null) {
 
   // https://github.com/earendil-works/pi/blob/74786a748f5314cc2127ebbcfa2d732e9b8433f5/packages/coding-agent/src/core/agent-session.ts#L143
   session.subscribe(async (event) => {
+    // per-run event census for stall diagnostics (see stallDiagnostics)
+    eventCounts[event.type] = (eventCounts[event.type] ?? 0) + 1;
+    lastEventAt = new Date().toISOString();
     // every agent event is watchdog activity EXCEPT provider auto-retry
     // events: a retry with exponential backoff is NOT progress (incident
     // 2026-11-06, session 01a1b2d2: a flapping llm connection retried for

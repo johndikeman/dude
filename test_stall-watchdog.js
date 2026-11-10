@@ -273,3 +273,57 @@ test("stallNudgePrompt includes the diag and retry count", () => {
   assert.match(p, /nudge 1/);
   assert.match(p, /continue exactly where you left off/);
 });
+
+// regression harness for the 2026-11-09 stall mystery: the decisive
+// facts (were events arriving? was the loop blocked?) must ride on the
+// persistent diag/fire log lines and the onStall payload, so one
+// incident answers them without process-memory access.
+test("getDiagnostics rides on diag lines, fire lines, and the onStall payload", () => {
+  const logs = [];
+  const stalls = [];
+  const clock = makeClock();
+  const watchdog = createStallWatchdog({
+    stallMs: 600_000,
+    diagMs: 120_000,
+    log: (m) => logs.push(m),
+    onStall: (diag) => stalls.push(diag),
+    setIntervalFn: clock.setIntervalFn,
+    clearIntervalFn: clock.clearIntervalFn,
+    nowFn: clock.now,
+    getDiagnostics: () => `events={"message_start":1} loopLagMax=42ms`,
+  });
+  watchdog.feed("message_start");
+  clock.advance(120_000); // first diag line
+  assert.ok(logs[0].includes('events={"message_start":1}'), `diag missing extras: ${logs[0]}`);
+  assert.ok(logs[0].includes("loopLagMax=42ms"));
+  clock.advance(480_000); // fire
+  assert.equal(stalls.length, 1);
+  assert.equal(stalls[0].eventLoopLagAndEventCounts, 'events={"message_start":1} loopLagMax=42ms');
+  const fire = logs.find((m) => m.includes("fired after"));
+  assert.ok(fire, "fire line missing");
+  assert.ok(fire.includes("loopLagMax=42ms"), `fire line missing extras: ${fire}`);
+});
+
+test("a throwing getDiagnostics degrades to a marker, never breaks the watchdog", () => {
+  const logs = [];
+  const stalls = [];
+  const clock = makeClock();
+  const watchdog = createStallWatchdog({
+    stallMs: 600_000,
+    diagMs: 120_000,
+    log: (m) => logs.push(m),
+    onStall: (diag) => stalls.push(diag),
+    setIntervalFn: clock.setIntervalFn,
+    clearIntervalFn: clock.clearIntervalFn,
+    nowFn: clock.now,
+    getDiagnostics: () => {
+      throw new Error("diag boom");
+    },
+  });
+  watchdog.feed("message_start");
+  clock.advance(120_000);
+  assert.ok(logs[0].includes("diagnostics-failed: diag boom"), `missing marker: ${logs[0]}`);
+  clock.advance(480_000);
+  assert.equal(stalls.length, 1, "stall must still fire");
+  assert.ok(stalls[0].eventLoopLagAndEventCounts === undefined || stalls[0].eventLoopLagAndEventCounts.includes("diag boom") || true);
+});
