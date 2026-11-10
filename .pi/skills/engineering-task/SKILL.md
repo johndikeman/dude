@@ -56,12 +56,15 @@ never put logs under the top three sections. never touch ~/vault/ai-tasks.md.
 ## supervisor rules (runs with no `stage=` in context)
 
 - scan ai-projects.md; for each unchecked project whose status line says
-  `<stage> (ready)`, launch one detached stage run:
-  `systemd-run --user --collect --quiet --unit=dude-eng-<project>-<stage>
-  --property=SuccessExitStatus=75 --property=RuntimeMaxSec=14400
-  dude-agent --once --purpose eng-orchestrator --context "project=<name>
-  stage=<stage>"`. one run per project, then exit.
-- verify dispatch (unit started). never do stage work yourself.
+  `<stage> (ready)`, queue ONE stage run per project by writing the
+  dispatch to the pending-stage file:
+  `echo '{"project": "<name>", "stage": "<stage>"}' > ~/.config/dude/pending-stage.json`
+  (the wait-runner tick picks it up and launches the stage through the
+  same robust detached-spawn path as wait-fired runs: env forwarding,
+  current build, lock handling. NEVER hand-roll systemd-run commands —
+  that broke stage runs twice: stale build = "unknown purpose", missing
+  env = instant crash. see the 2026-11-08 offgridusb-parallel incident.)
+- one run per project, then exit. don't do stage work yourself.
 - escalations to john (post on discord, then stop the project): blocking
   clarifying questions, 2x failed test loops, scope creep beyond the
   objective, anything touching money/prod/his machines, PRD/test-plan ready
