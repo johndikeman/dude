@@ -21,37 +21,37 @@ import {
   NON_PROGRESS_EVENTS,
 } from "./src/stall-watchdog.js";
 
-/** minimal fake clock + timer harness: deterministic, no real waiting */
+/** minimal fake clock + timer harness: deterministic, no real waiting.
+ * the watchdog now uses a self-rescheduling *interval* (one live interval
+ * per armed state, fired repeatedly until cleared), so the harness models
+ * interval semantics: each due tick re-schedules itself. */
 function makeClock() {
   // start at a realistic 2026 epoch so ISO timestamps in diag payloads
   // look like real dates (regression tests assert on ^20...)
   let now = 1_769_668_000_000;
   let nextId = 0;
-  const timers = new Map(); // id -> { at, fn }
-  const timeouts = [];
+  const timers = new Map(); // id -> { at, every, fn }
+  const live = [];
   return {
     now: () => now,
-    setTimeoutFn: (fn, ms) => {
+    setIntervalFn: (fn, ms) => {
       const id = ++nextId;
-      const at = now + ms;
-      timers.set(id, { at, fn });
-      timeouts.push(id);
-      return id; // the handle IS the id: clearTimeoutFn(id) must work
+      timers.set(id, { at: now + ms, every: ms, fn });
+      live.push(id);
+      return id; // the handle IS the id: clearIntervalFn(id) must work
     },
-    clearTimeoutFn: (id) => {
+    clearIntervalFn: (id) => {
       timers.delete(id);
-      const i = timeouts.indexOf(id);
-      if (i >= 0) timeouts.splice(i, 1);
+      const i = live.indexOf(id);
+      if (i >= 0) live.splice(i, 1);
     },
     advance(ms) {
       const target = now + ms;
-      // drain in order of due-time, advancing the clock to each timer's
-      // own scheduled time (so "now" is always the moment the callback
-      // should run) — the watchdog re-schedules itself during check(),
-      // and follow-up timers must fire inside the same advance().
-      for (let guard = 0; guard < 1000; guard++) {
+      // drain in order of due-time, advancing the clock to each tick's
+      // own scheduled time and re-scheduling intervals as they fire.
+      for (let guard = 0; guard < 10000; guard++) {
         let due = null;
-        for (const id of [...timeouts]) {
+        for (const id of [...live]) {
           const t = timers.get(id);
           if (!t) continue;
           if (t.at <= target) {
@@ -59,14 +59,13 @@ function makeClock() {
           }
         }
         if (!due) break;
-        timers.delete(due.id);
-        const i = timeouts.indexOf(due.id);
-        if (i >= 0) timeouts.splice(i, 1);
-        now = due.t.at;
+        const fireAt = due.t.at;
+        due.t.at += due.t.every; // interval re-schedules itself
+        now = fireAt;
         due.t.fn();
       }
     },
-    pending: () => timeouts.length,
+    pending: () => live.length,
   };
 }
 
@@ -79,8 +78,8 @@ function makeHarness({ stallMs: s, diagMs: d } = {}) {
     diagMs: d,
     log: (m) => logs.push(m),
     onStall: (diag) => stalls.push(diag),
-    setTimeoutFn: clock.setTimeoutFn,
-    clearTimeoutFn: clock.clearTimeoutFn,
+    setIntervalFn: clock.setIntervalFn,
+    clearIntervalFn: clock.clearIntervalFn,
     nowFn: clock.now,
   });
   return { clock, logs, stalls, watchdog };
@@ -220,19 +219,19 @@ test("a throwing onStall handler doesn't kill the watchdog or the caller", () =>
     onStall: () => {
       throw new Error("boom");
     },
-    setTimeoutFn: clock.setTimeoutFn,
-    clearTimeoutFn: clock.clearTimeoutFn,
+    setIntervalFn: clock.setIntervalFn,
+    clearIntervalFn: clock.clearIntervalFn,
     nowFn: clock.now,
   });
   watchdog.feed("message_start");
   clock.advance(600_000);
   // advance() fired the diag checks at 2m/4m/6m/8m, then the stall at
   // 10m — the stall handler threw, so the watchdog must have logged
-  // the error and NOT re-armed (no stalls recorded by the harness)
+  // the error and NOT re-armed (no stalls recorded by the harness).
+  // onStall runs before the "fired" log line (abort-first ordering),
+  // so the throw report lands mid-log, not last.
   assert.equal(stalls.length, 0);
-  assert.ok(logs.length >= 2);
-  const last = logs[logs.length - 1];
-  assert.match(last, /onStall handler threw/);
+  assert.ok(logs.some((m) => /onStall handler threw/.test(m)));
 });
 
 // regression: incident 2026-11-06 (session 01a1b2d2) — a flapping llm

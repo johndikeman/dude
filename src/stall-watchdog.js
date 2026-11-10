@@ -65,17 +65,28 @@ function fmtMs(ms) {
  * feed() every agent event; onStall({idleMs, lastEventType, ...}) fires
  * at most once per run unless reset() is called (index.js resets it on
  * a successful re-prompt after a stall-abort).
+ *
+ * implementation note (2026-11-10): the tick is a self-rescheduling
+ * setTimeout *inside* the callback in the original design, which meant
+ * a lost/dropped re-arm silently disarmed the watchdog forever (the
+ * 2026-11-09 22:58 session produced ZERO watchdog output during a
+ * 100-minute hung llm request, cause never fully identified — see
+ * diagnose/ notes). the tick is now a real interval: libuv keeps firing
+ * it every diagMs no matter what any single callback does, so the
+ * watchdog cannot be silently disarmed by a missed re-arm.
  */
 export function createStallWatchdog({
   stallMs: stallThreshold = stallMs(),
   diagMs: diagInterval = diagMs(),
   log = console.error,
   onStall = () => {},
+  setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval,
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
   nowFn = () => Date.now(),
 } = {}) {
-  if (!stallThreshold || stallThreshold <= 0) {
+  if (stallThreshold == null || stallThreshold <= 0) {
     return {
       feed() {},
       reset() {},
@@ -94,11 +105,16 @@ export function createStallWatchdog({
 
   const schedule = () => {
     if (stopped) return;
-    if (timer) clearTimeoutFn(timer);
-    // check at the diag interval; each check either logs a diag line,
-    // fires the stall handler once, or re-arms itself.
-    timer = setTimeoutFn(check, diagInterval);
+    if (timer) return; // interval already ticking — nothing to do
+    timer = setIntervalFn(check, diagInterval);
     if (typeof timer.unref === "function") timer.unref();
+  };
+
+  const unschedule = () => {
+    if (timer) {
+      clearIntervalFn(timer);
+      timer = null;
+    }
   };
 
   function check() {
@@ -108,16 +124,13 @@ export function createStallWatchdog({
     // an in-flight tool is legitimate silence — don't diag or fire,
     // just look again after another interval
     if (toolDepth > 0) {
-      schedule();
       return;
     }
     if (idle >= stallThreshold) {
       stallCount += 1;
-      log(
-        `llm stall watchdog: firing after ${fmtMs(idle)} with no agent activity ` +
-          `(last event: ${lastEventType} at ${new Date(lastActivityAt).toISOString()}; ` +
-          `toolDepth=${toolDepth}; stalls this run=${stallCount}); aborting session so the hung request is killed and the run can be nudged`,
-      );
+      // abort FIRST, log after: a slow/blocking log call must never
+      // prevent the recovery abort from happening (the 2026-11-09
+      // session showed timer-callback log paths can wedge).
       try {
         onStall({
           idleMs: idle,
@@ -128,7 +141,14 @@ export function createStallWatchdog({
       } catch (e) {
         log(`llm stall watchdog: onStall handler threw: ${e?.stack || e?.message || e}`);
       }
-      return; // not re-armed: index.js feeds/reset resumes watching
+      log(
+        `llm stall watchdog: fired after ${fmtMs(idle)} with no agent activity ` +
+          `(last event: ${lastEventType} at ${new Date(lastActivityAt).toISOString()}; ` +
+          `toolDepth=${toolDepth}; stalls this run=${stallCount}); aborting session so the hung request is killed and the run can be nudged`,
+      );
+      // stop watching until the recovery path feeds/resets us
+      unschedule();
+      return;
     }
     if (idle >= diagInterval && now - lastDiagAt >= diagInterval) {
       lastDiagAt = now;
@@ -137,7 +157,6 @@ export function createStallWatchdog({
           `(last event: ${lastEventType}; toolDepth=${toolDepth}; abort at ${fmtMs(stallThreshold - idle)})`,
       );
     }
-    schedule();
   }
 
   return {
@@ -162,10 +181,7 @@ export function createStallWatchdog({
     },
     stop() {
       stopped = true;
-      if (timer) {
-        clearTimeoutFn(timer);
-        timer = null;
-      }
+      unschedule();
     },
     state: () => ({
       toolDepth,

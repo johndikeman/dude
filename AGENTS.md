@@ -180,6 +180,23 @@ obsidian-sync-recipes (`op run -- ob sync --continuous`).
   units; a hard start-pre failure in either aborts the deploy even with
   all the other fixes. graceful start-pre + runtime failure + start-limit
   ban is the only combination that survives an outage end to end.
+- 2026-11-09 22:58 (session 01a1c288): discord-triggered run hung 100 min
+  on a silently-wedged openrouter request ("upstream idle timeout"), pi's
+  auto-retry recovered at 00:39 — and the run DIED at the moment of
+  recovery. root cause: pi emits `auto_retry_end {success: true, attempt}`
+  when a retry succeeds, and the subscriber's auto_retry_end case treated
+  every auto_retry_end as terminal: tore down the run, then crashed on
+  truncateLine(undefined) in the discord reply (TypeError → unhandled
+  rejection → crash-guard exit 1). the successful retry's tool call never
+  executed; the user got no reply. FIXED: isAutoRetryFailure() only tears
+  down on explicit success:false. LESSON: match event fields, not event
+  names — the two auto_retry_end shapes are opposites. SECONDARY: the
+  stall watchdog produced ZERO output during the 100-min hang (evidence
+  contradictory: process provably alive at 23:55 via a typing log line,
+  yet an armed 2-min re-arming timer never logged); the tick is now a
+  self-rescheduling interval (a dropped re-arm can't silently disarm it)
+  and onStall runs before the fire log so a blocked log can't prevent the
+  abort. keep an eye on watchdog output in the next stall incident.
 
 ## tone / house rules for future runs
 

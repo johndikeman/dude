@@ -50,6 +50,7 @@ import {
   stallNudgePrompt,
   isStallProgressEvent,
 } from "./stall-watchdog.js";
+import { isAutoRetryFailure, retryErrorText } from "./auto-retry.js";
 import { buildAgentPrompt } from "./agent-prompt.js";
 import {
   writeBreadcrumb,
@@ -888,21 +889,29 @@ async function runCycle(message = null, sessionFileToResume = null) {
         }
         break;
       }
-      case "auto_retry_end":
+      case "auto_retry_end": {
+        // pi emits auto_retry_end with success:true when a provider retry
+        // RECOVERED — the retried response streams normally and the agent
+        // loop continues on its own. treating that as a terminal failure
+        // ended the run mid-task and crashed on truncateLine(undefined)
+        // inside the discord reply (incident 2026-11-09, session 01a1c288:
+        // "pi failed: undefined" → TypeError → crash-guard exit 1).
+        if (!isAutoRetryFailure(event)) break;
         stopTyping?.();
         isRunning = false;
         releaseLockAndStopCap();
         emptyResponseRetries = MAX_EMPTY_RESPONSE_RETRIES;
         currentRunningTask = null;
         pausedTaskInfo = null;
-        log(`pi failed: ${event.finalError}`);
-        if (/402|credit|quota|insufficient/i.test(String(event.finalError))) {
+        const finalError = retryErrorText(event.finalError);
+        log(`pi failed: ${finalError}`);
+        if (/402|credit|quota|insufficient/i.test(finalError)) {
           lastRunHitQuotaLimit = true;
           log("quota/credit limit detected.");
         }
         if (message) {
           const reply = await message.reply(
-            `pi has failed: ${truncateLine(event.finalError, 1999).text}`,
+            `pi has failed: ${truncateLine(finalError, 1999).text}`,
           );
           if (session.sessionFile) {
             const map = loadDiscordSessionMap();
@@ -918,11 +927,12 @@ async function runCycle(message = null, sessionFileToResume = null) {
         } else {
           void notifyRunFinish({
             outcome: "failed",
-            err: event.finalError,
+            err: finalError,
             sessionFile: session.sessionFile,
           });
         }
         break;
+      }
     }
   });
 
