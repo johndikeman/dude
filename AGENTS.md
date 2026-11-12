@@ -129,6 +129,41 @@ systemd units (home-manager, see dotfiles): `dude-agent-watch.service`
 `dude-agent-prediction-markets.service` (own timer), obsidian-sync +
 obsidian-sync-recipes (`op run -- ob sync --continuous`).
 
+## dude2 (dispatcher-centric v2, branch `dude2`)
+
+dude2 is the multi-agent revision of dude: one dispatcher process, N spawned
+isolated runs, a generic input queue, and an agent api extension bundle.
+**IT RUNS ALONGSIDE V1 — zero shared mutable state, ever.**
+
+- **the state-path rule (john's hard requirement):** every dude2 state file
+  path MUST be env-configurable and tracked by nix. `src/dude2/config.js`
+  is the single code-level source of truth (`DUDE2_CONFIG_DIR`,
+  `DUDE2_WORKSPACE`, `DUDE2_SESSION_DIR`, `DUDE2_QUEUE_DB`,
+  `DUDE2_AGENTS_STATE_FILE`, `DUDE2_LOG_DIR`, ...); the
+  `homeManagerModules.dude2-agent` flake module is the deployment-level
+  source of truth. adding any new state file? add it to BOTH. never let a
+  dude2 path default into v1's `~/.config/dude` tree —
+  `assertIsolation()` enforces this at startup.
+- `src/dude2/queue.js` — generic input queue (sqlite, node:sqlite). every
+  input (discord msg, wait-runner one-shot, file drop, api) normalizes to
+  `{source, type, context, runId?}`; dedupe by key; entries claim/complete.
+- `src/dude2/dispatcher.js` — the long-running spine: drains the queue,
+  spawns runs (cap: `DUDE2_MAX_CONCURRENT_RUNS`, default 3), owns the
+  discord client + presence, ingests file drops from
+  `$DUDE2_CONFIG_DIR/queue.d/*.json` (the pending-stage.json pattern).
+  injectable gateway/spawner seams exist for the e2e harness.
+- `src/dude2/run.js` (`dude2-run`) / `run-executor.js` — per-run wrapper
+  that delegates to v1's `dude-agent --once` with the environment
+  re-pointed at dude2 paths, so ALL of v1's battle-tested hardening
+  (loop breaker, empty-response retry, stall watchdog, crash guard,
+  runtime cap, resume breadcrumbs) is reused verbatim. runs file outbound
+  discord replies as `$DUDE2_CONFIG_DIR/replies/<runId>.json`; the
+  dispatcher (which owns the bot client) forwards them in-thread.
+- `src/dude2/registry.js` + `presence.js` — agents-state.json bookkeeping
+  and the whimsical discord presence cycler driven from it.
+- tests: `test/dude2-*.js` (unit) + `test/dude2-e2e.js` (mocked e2e:
+  stub gateway + stub run impl). elite e2e > piles of batch scripts.
+
 ## debugging
 
 - agent log: `~/.config/dude/agent.log` (also journald under the unit)
