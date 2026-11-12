@@ -1080,8 +1080,11 @@
                   RestartSec = "10s";
                   TimeoutStopSec = "30s";
                   # the 1p service-account token op needs to resolve the
-                  # token ref (same pattern as v1's purpose units)
+                  # token ref (same pattern as v1's purpose units).
+                  # the token lives in ~/.config/dude/.env (v1's config dir) —
+                  # the workspace .env alone is not enough.
                   EnvironmentFile = [
+                    "-${config.home.homeDirectory}/.config/dude/.env"
                     "-${config.home.homeDirectory}/dude-workspace/.env"
                   ];
                 };
