@@ -142,7 +142,7 @@
           # dude2: same codebase, dispatcher-centric multi-agent runtime.
           # lives on the dude2 branch until merge (dotfiles imports
           # github:johndikeman/dude/dude2 directly — no ?dir= subflake).
-          packages.dude2 = packages.default;
+          packages.dude2 = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
 
           # Home Manager module for the dude2 dispatcher spine + wait timer
           # bridge. Mirrors services.dude-agent but prefixes every unit name
