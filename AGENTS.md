@@ -161,8 +161,32 @@ isolated runs, a generic input queue, and an agent api extension bundle.
   dispatcher (which owns the bot client) forwards them in-thread.
 - `src/dude2/registry.js` + `presence.js` — agents-state.json bookkeeping
   and the whimsical discord presence cycler driven from it.
+- `src/dude2/api-extension.js` — **the dude2 api** (phase 2): pi extension
+  loaded into every run (`DUDE2_RUN_ID` set). tools: `discord_send`
+  (rich messages + numbered multiple-choice), `spawn_run` (enqueue a new
+  isolated run — the orchestrator's dispatch primitive), `discord_presence`
+  (whimsical status note), `op_read` (1password service-account reads),
+  `session_query` (search previous run logs/sessions). skill doc:
+  `.pi/skills/dude2-api/SKILL.md`.
+- `src/dude2/compaction-extension.js` — auto-compaction tuned for glm-5.3
+  (`DUDE2_COMPACTION_*` env -> workspace `.pi/settings.json` at run start)
+  + dude2 compaction instructions (state machines, victory conditions and
+  escalations survive summarization).
+- `src/dude2/logging.js` — unified sourced run logs: per-run JSONL at
+  `$DUDE2_LOG_DIR/runs/<runId>.jsonl` with explicit sources
+  (`dispatcher` / `pi-stdout` / `pi-session` / `agent`), local-time
+  timestamps, sqlite index. `src/dude2/log-export.js` exports to supabase
+  in a langfuse-shaped payload (`DUDE2_EXPORT_SUPABASE_*`) with a
+  disk-local fallback. `tools/logviewer/server.js` is a small web UI:
+  run list, sourced drill-down, rating/annotation.
+- `src/dude2/orchestrator.js` — the eng-orchestrator revamp (phase 6):
+  per-stage personalized instruction briefs for sub-agent stage runs,
+  dispatched via the `spawn_run` api tool; see
+  `.pi/skills/dude2-orchestrator/SKILL.md`.
 - tests: `test/dude2-*.js` (unit) + `test/dude2-e2e.js` (mocked e2e:
-  stub gateway + stub run impl). elite e2e > piles of batch scripts.
+  stub gateway + stub run impl; e2e-1 isolation/reply, e2e-2 api +
+  reprompt, e2e-3 sourced logging, e2e-4 red-verdict, e2e-5 coexistence +
+  presence). elite e2e > piles of batch scripts.
 
 ## debugging
 

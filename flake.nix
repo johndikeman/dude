@@ -144,6 +144,18 @@
           # github:johndikeman/dude/dude2 directly — no ?dir= subflake).
           packages.dude2 = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
 
+          # the mocked e2e UAT harness (us5): `nix run .#e2e` runs the full
+          # node test suite incl. the elite mocked end-to-end tests against
+          # the real built binaries. pass/fail verdict = exit code.
+          apps.e2e = {
+            type = "app";
+            program = "${pkgs.writeShellScript "dude2-e2e" ''
+              set -euo pipefail
+              export PI_SESSION_DIR="$PWD/.e2e-sessions"
+              exec ${pkgs.nodejs_24}/bin/node --test test/dude2-*.js
+            ''}";
+          };
+
           # Home Manager module for the dude2 dispatcher spine + wait timer
           # bridge. Mirrors services.dude-agent but prefixes every unit name
           # with dude2- and points all state paths at the dude2 config dir
