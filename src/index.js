@@ -69,6 +69,7 @@ const require = createRequire(import.meta.url);
 // resolve bundled pi extension entry points (provider extensions etc.) so the
 // resource loader picks them up in every session
 import { globalPiExtensionPaths } from "./agent-extensions.js";
+import { fileURLToPath } from "url";
 const ADDITIONAL_EXTENSION_PATHS = ["pi-gemini-batch", ...globalPiExtensionPaths()]
   .map((pkg) => {
     try {
@@ -79,6 +80,15 @@ const ADDITIONAL_EXTENSION_PATHS = ["pi-gemini-batch", ...globalPiExtensionPaths
     }
   })
   .filter(Boolean);
+// dude2 runs (spawned via dude2-run, DUDE2_RUN_ID set) get the dude2-api
+// extension: discord_send / spawn_run / discord_presence / op_read /
+// session_query (phase 2 capability layer) + tuned compaction (phase 3)
+if (process.env.DUDE2_RUN_ID) {
+  ADDITIONAL_EXTENSION_PATHS.push(
+    fileURLToPath(new URL("./dude2/api-extension.js", import.meta.url)),
+    fileURLToPath(new URL("./dude2/compaction-extension.js", import.meta.url)),
+  );
+}
 
 import {
   createAgentSession,
