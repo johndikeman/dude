@@ -58,9 +58,20 @@ export function loadConfig(env = process.env) {
     // the v1 agent binary dude2-run delegates to (reuses the battle-tested
     // hardening verbatim; injectable for e2e tests)
     runImpl: env.DUDE2_RUN_IMPL || null,
+    // compaction (phase 3): tuned for glm-5.3's window by default; the
+    // run writes these into the workspace .pi/settings.json pi reads
+    compactionEnabled: env.DUDE2_COMPACTION_ENABLED !== "0",
+    compactionReserveTokens: positiveInt(env.DUDE2_COMPACTION_RESERVE_TOKENS, 24_000),
+    compactionKeepRecentTokens: positiveInt(env.DUDE2_COMPACTION_KEEP_RECENT_TOKENS, 32_000),
+    // log export (phase 4): supabase first, disk-local fallback
+    exportSupabaseUrl: env.DUDE2_EXPORT_SUPABASE_URL || null,
+    exportSupabaseKey: env.DUDE2_EXPORT_SUPABASE_KEY || null,
+    exportSupabaseTable: env.DUDE2_EXPORT_SUPABASE_TABLE || "langfuse_traces",
+    exportDir: env.DUDE2_EXPORT_DIR || null, // resolved from logDir below
   };
   // defaults that derive from configDir
   if (!env.DUDE2_WORKSPACE) cfg.workspace = path.join(configDir, "workspace");
+  if (!cfg.exportDir) cfg.exportDir = path.join(cfg.logDir, "export");
   return cfg;
 }
 

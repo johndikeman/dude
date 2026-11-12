@@ -16,6 +16,7 @@
 import { spawn } from "child_process";
 import path from "path";
 import { loadConfig, assertIsolation } from "./config.js";
+import { writeCompactionSettings } from "./compaction-extension.js";
 import { defaultV1AgentPath } from "./run-executor.js";
 
 const cfg = loadConfig();
@@ -31,6 +32,17 @@ process.env.DUDE_WORKING_DIR = cfg.workspace;
 
 const impl = cfg.runImpl || defaultV1AgentPath();
 const args = [...process.argv.slice(2)];
+
+// phase 3: auto-compaction tuned for glm-5.3 — pi reads compaction
+// settings from <project-dir>/.pi/settings.json and the run's project
+// dir IS the workspace (DUDE_WORKING_DIR). best-effort: a settings
+// write failure must never block the run.
+try {
+  const file = writeCompactionSettings(cfg, cfg.workspace);
+  console.log(`[dude2-run ${runId}] compaction settings -> ${file}`);
+} catch (e) {
+  console.error(`[dude2-run ${runId}] compaction settings write failed (non-fatal): ${e?.message || e}`);
+}
 
 console.log(`[dude2-run ${runId}] impl=${path.basename(impl)} args=${args.join(" ")}`);
 
