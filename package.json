@@ -6,7 +6,9 @@
   "main": "src/index.js",
   "bin": {
     "dude-agent": "src/index.js",
-    "dude-wait": "src/wait-runner.js"
+    "dude-wait": "src/wait-runner.js",
+    "dude2-dispatch": "src/dude2/dispatcher.js",
+    "dude2-run": "src/dude2/run.js"
   },
   "scripts": {
     "start": "node src/index.js"

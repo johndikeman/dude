@@ -139,6 +139,122 @@
             EOF
           '';
 
+          # dude2: same codebase, dispatcher-centric multi-agent runtime.
+          # lives on the dude2 branch until merge (dotfiles imports
+          # github:johndikeman/dude/dude2 directly — no ?dir= subflake).
+          packages.dude2 = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+
+          # Home Manager module for the dude2 dispatcher spine + wait timer
+          # bridge. Mirrors services.dude-agent but prefixes every unit name
+          # with dude2- and points all state paths at the dude2 config dir
+          # (zero shared mutable state with v1; see src/dude2/config.js —
+          # every path is env-configurable and this module is the source of
+          # truth for those values).
+          homeManagerModules.dude2-agent =
+            {
+              config,
+              lib,
+              pkgs,
+              ...
+            }:
+            let
+              cfg = config.services.dude2-agent;
+              pkg = self.packages.${pkgs.stdenv.hostPlatform.system}.dude2;
+            in
+            {
+              options.services.dude2-agent = {
+                enable = lib.mkEnableOption "Dude2 Dispatcher Service";
+                configDirectory = lib.mkOption {
+                  type = lib.types.str;
+                  default = "${config.home.homeDirectory}/.config/dude2";
+                  description = " dude2 config/state directory (never v1's dude dir).";
+                };
+                workingDirectory = lib.mkOption {
+                  type = lib.types.str;
+                  default = "${config.home.homeDirectory}/dude2-workspace";
+                };
+                sessionDir = lib.mkOption {
+                  type = lib.types.str;
+                  default = "${cfg.configDirectory}/sessions";
+                };
+                logDir = lib.mkOption {
+                  type = lib.types.str;
+                  default = "${cfg.configDirectory}/logs";
+                };
+                discordTokenRef = lib.mkOption {
+                  type = lib.types.str;
+                  default = "op://AI/dude 2 discord token/password";
+                  description = " 1Password ref for dude2's own discord bot token.";
+                };
+                maxConcurrentRuns = lib.mkOption {
+                  type = lib.types.int;
+                  default = 3;
+                };
+                waitTimer = {
+                  enable = lib.mkOption { type = lib.types.bool; default = true; };
+                  interval = lib.mkOption { type = lib.types.str; default = "*:0/15"; };
+                };
+              };
+
+              config = lib.mkIf cfg.enable {
+                systemd.user.services.dude2-dispatch = {
+                  Unit = {
+                    Description = "Dude2 Dispatcher (multi-agent spine)";
+                    After = [ "network.target" ];
+                    StartLimitBurst = "3";
+                    StartLimitIntervalSec = "20min";
+                  };
+                  Service = {
+                    Type = "simple";
+                    WorkingDirectory = cfg.workingDirectory;
+                    ExecStartPre = [
+                      "${pkgs.coreutils}/bin/mkdir -p ${cfg.configDirectory} ${cfg.workingDirectory} ${cfg.sessionDir} ${cfg.logDir}"
+                    ];
+                    ExecStart =
+                      let
+                        # op:// refs stay literal here — `op run --env-file`
+                        # resolves them at invocation (v1's .opvars pattern)
+                        envFile = pkgs.writeText "dude2.env" ''
+                          DUDE2_CONFIG_DIR=${cfg.configDirectory}
+                          DUDE2_WORKSPACE=${cfg.workingDirectory}
+                          DUDE2_SESSION_DIR=${cfg.sessionDir}
+                          DUDE2_LOG_DIR=${cfg.logDir}
+                          DUDE2_MAX_CONCURRENT_RUNS=${toString cfg.maxConcurrentRuns}
+                          DUDE2_DISCORD_TOKEN=${cfg.discordTokenRef}
+                        '';
+                      in
+                      "${pkgs._1password-cli}/bin/op run --env-file ${envFile} -- ${pkg}/bin/dude2-dispatch";
+                    Restart = "always";
+                    RestartSec = "10s";
+                    TimeoutStopSec = "30s";
+                    # the 1p service-account token op needs to resolve the
+                    # token ref (same pattern as v1's purpose units)
+                    EnvironmentFile = [
+                      "-${config.home.homeDirectory}/dude-workspace/.env"
+                    ];
+                  };
+                  Install.WantedBy = [ "default.target" ];
+                };
+
+                systemd.user.services.dude2-wait = lib.mkIf cfg.waitTimer.enable {
+                  Unit.Description = "Dude2 Wait Function Checker";
+                  Service = {
+                    Type = "simple";
+                    ExecStart = "${pkg}/bin/dude-agent --help"; # bridge wired in a later phase
+                    Restart = "no";
+                  };
+                };
+                systemd.user.timers.dude2-wait = lib.mkIf cfg.waitTimer.enable {
+                  Unit.Description = "Dude2 Wait Timer";
+                  Timer = {
+                    OnCalendar = cfg.waitTimer.interval;
+                    Persistent = true;
+                  };
+                  Install.WantedBy = [ "timers.target" ];
+                };
+              };
+            };
+
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
               nodejs_24
