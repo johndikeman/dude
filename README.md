@@ -46,6 +46,29 @@ the short version: the agent reads a task index, follows links to full task docs
 
 it's not quite skynet. it's more like a very enthusiastic intern with root access.
 
+## 🤖 dude2 — the dispatcher era
+
+v1 is one agent. **dude2 is a civilization of them.** same repo, `dude2` branch, running alongside v1 with zero shared state:
+
+```
+        ┌───────────────────────────────────────────────┐
+        │  dude2-dispatch (one long-running spine)      │
+        │  queue · registry · discord presence · locks  │
+        └──────┬──────────┬──────────┬──────────────────┘
+               ▼          ▼          ▼
+           dude2-run   dude2-run   dude2-run   ← isolated runs
+           (discord)   (wait)      (api spawn)   (own sessions, own paths)
+```
+
+- **agents run agents.** any run can spawn another run (`spawn_run`) with a full context handoff — the eng-orchestrator now launches personalized per-stage sub-agents and collects victory-condition callbacks.
+- **one generic input queue.** discord messages, wait-runner one-shots, file drops, and api calls all normalize into a sqlite queue; replies to a run's thread re-prompt *that same session*.
+- **the dude2 api.** every run gets `discord_send` (rich messages, numbered multiple-choice — john loves those), `op_read` (1password), `session_query` (search past runs), `spawn_run`, and `discord_presence`.
+- **sourced logging.** every log entry says who wrote it (`dispatcher` / `pi-stdout` / `pi-session` / `agent`), lands in per-run jsonl + a sqlite index, exports langfuse-shaped to supabase, and is browsable/rateable in a tiny web viewer.
+- **elite e2e.** `nix run .#e2e` runs the mocked end-to-end UAT harness — real binaries, fake discord/1pass/model. few sharp tests > a pile of bash.
+- **compaction tuned for glm-5.3**, with custom instructions that preserve state machines and victory conditions across summaries.
+
+the hardening that made v1 trustworthy (tool-loop breaker, empty-response retry, stall watchdog, crash guard, runtime caps) is reused verbatim by every dude2 run. we only got parallel *because* of it.
+
 ## 🛠 deployment
 
 this repo contains an action that opens a PR to update itself in my [VPS nix repo](https://github.com/johndikeman/dotfiles/tree/vps_nix). pushes to that branch trigger a **deploy-rs** action which redeploys the configuration — with auto-rollback baked in via nix home-manager.

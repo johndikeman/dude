@@ -43,9 +43,17 @@ import {
   canSpawn,
   pruneFinished,
   newRunId,
+  setRunNote,
 } from "./registry.js";
 import { buildRunInvocation } from "./run-executor.js";
 import { startPresenceCycler } from "./presence.js";
+import {
+  openLogIndex,
+  appendEntry,
+  recordRunStart,
+  recordRunEnd,
+  recordSessionRef,
+} from "./logging.js";
 
 const cfg = loadConfig();
 assertIsolation(cfg);
@@ -120,10 +128,12 @@ export function createDispatcher({
   db,
   spawnRunImpl = spawnRun,
   gateway = null, // { sendReply({channelId, text}) } when discord is wired
+  logDb = null, // unified logging sqlite (phase 4); auto-opened when null
 } = {}) {
   const threadToRun = {}; // channelId -> runId (us2.1 mapping)
   const runsByQueue = {}; // queueId -> {runId, child}
   const channelByRun = {}; // runId -> channelId (reply forwarding)
+  const logIndex = logDb ?? openLogIndex(config);
 
   function spawnRun(entry) {
     const runId = entry.runId || newRunId();
@@ -139,8 +149,11 @@ export function createDispatcher({
     });
     const inv = buildRunInvocation(config, { ...entry, runId });
     log("dispatcher", `dispatching queue #${entry.id} as run ${runId} (${inv.args.join(" ")})`);
+    recordRunStart(config, logIndex, { runId, purpose: entry.type === "purpose" ? inv.purpose : null });
     const child = spawnRunImpl(inv, { runId, entry });
     if (child == null) return null;
+    // capture run stdout/stderr -> per-run jsonl as pi-stdout entries
+    captureRunOutput(config, logIndex, runId, child);
     runsByQueue[entry.id] = { runId, child };
     // discord prompt inputs remember their channel so replies re-prompt
     // the same session (us2.1) and outbound replies land in-thread
@@ -170,6 +183,8 @@ export function createDispatcher({
         child.finished = true;
         markExited(config.agentsStateFile, runId, child.exitCode ?? 1);
         complete(db, Number(queueId), `run ${runId} exited ${child.exitCode ?? "signal " + child.signalCode}`);
+        recordRunEnd(config, logIndex, { runId, exitCode: child.exitCode ?? 1 });
+        recordSessionRefFromDir(config, logIndex, runId);
         delete runsByQueue[queueId];
         log("dispatcher", `run ${runId} finished (exit ${child.exitCode ?? child.signalCode})`);
       }
@@ -212,10 +227,39 @@ export function createDispatcher({
     }
   }
 
+  /**
+   * reapPresence: fold run-filed presence notes ($DUDE2_CONFIG_DIR/
+   * api/presence/<runId>.json from the dude2-api discord_presence tool)
+   * into the registry so the presence cycler surfaces them on discord.
+   */
+  function reapPresence() {
+    const dir = path.join(config.configDir, "api", "presence");
+    let files = [];
+    try {
+      files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    } catch {
+      return;
+    }
+    for (const f of files) {
+      const full = path.join(dir, f);
+      try {
+        const note = JSON.parse(fs.readFileSync(full, "utf8"));
+        if (note.runId && note.text) {
+          setRunNote(config.agentsStateFile, note.runId, note.text);
+          log("dispatcher", `presence note for ${note.runId}: "${note.text}"`);
+        }
+        fs.unlinkSync(full);
+      } catch (e) {
+        log("dispatcher", `presence file ${f} unreadable: ${e?.message || e}`);
+      }
+    }
+  }
+
   return {
     drainOne,
     reapFinished,
     reapReplies,
+    reapPresence,
     spawnRun,
     threadToRun,
     ingestDiscordMessage: (msg) => {
@@ -231,15 +275,50 @@ export function createDispatcher({
   };
 }
 
-/** the real spawner: detached child per run (cgroup caps land in phase 1 nix). */
+/** the real spawner: detached child per run (cgroup caps land in phase 1 nix).
+ * stdout/stderr are piped so the dispatcher can source-tag them into the
+ * unified run log (phase 4); stub spawners used in e2e may not emit them. */
 export function spawnRun(inv) {
   const child = spawn(inv.cmd, inv.args, {
     env: inv.env,
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
     detached: false,
   });
   child.unref?.();
   return child;
+}
+
+/** feed run stdout/stderr lines into the unified log as pi-stdout. */
+export function captureRunOutput(config, logIndex, runId, child) {
+  const drain = (stream) => {
+    if (!stream) return;
+    let buf = "";
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk) => {
+      buf += chunk;
+      let idx;
+      while ((idx = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, idx).trimEnd();
+        buf = buf.slice(idx + 1);
+        if (line) appendEntry(config, logIndex, { runId, source: "pi-stdout", kind: "stdout", text: line });
+      }
+    });
+  };
+  drain(child.stdout);
+  drain(child.stderr);
+}
+
+/** after a run exits, point the log at its pi session transcript. */
+function recordSessionRefFromDir(config, logIndex, runId) {
+  const dir = path.join(config.sessionDir, runId);
+  let files = [];
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+  } catch {
+    return;
+  }
+  const latest = files.sort().pop();
+  if (latest) recordSessionRef(config, logIndex, { runId, sessionFile: path.join(dir, latest) });
 }
 
 // ---- CLI entry -----------------------------------------------------------
@@ -288,6 +367,7 @@ if (isMain) {
   function reapAndDrain() {
     dispatcher.reapFinished();
     dispatcher.reapReplies();
+    dispatcher.reapPresence();
     // keep draining while under the cap and entries remain
     while (dispatcher.drainOne()) {
       if (!canSpawn(cfg.agentsStateFile, cfg.maxConcurrentRuns)) break;

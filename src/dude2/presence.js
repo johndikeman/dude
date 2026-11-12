@@ -20,10 +20,13 @@ export const IDLE_LINES = [
   "waiting for john's next whim",
 ];
 
-/** build one presence line from the registry state. */
+/** build one presence line from the registry state. run notes from the
+ * dude2-api discord_presence tool win over the generic purpose line. */
 export function presenceText(state) {
   const running = (state?.runs ?? []).filter((r) => r.status === "running");
   if (running.length === 0) return pick(IDLE_LINES);
+  const noted = running.find((r) => r.note);
+  if (noted && running.length === 1) return noted.note;
   const names = running.map((r) => r.purpose || r.runId);
   if (running.length === 1) return `herding 1 agent (${names[0]})`;
   return `herding ${running.length} agents (${names.slice(0, 2).join(", ")}${running.length > 2 ? ", ..." : ""})`;

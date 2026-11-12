@@ -88,6 +88,20 @@ export function listRunning(file, fsMod = fs) {
 }
 
 /**
+ * attach/update a free-form note on a run (dude2-api discord_presence
+ * notes surface here; the presence cycler prefers them).
+ */
+export function setRunNote(file, runId, note, fsMod = fs) {
+  const state = readState(file, fsMod);
+  const run = state.runs.find((r) => r.runId === runId);
+  if (run) {
+    run.note = String(note).slice(0, 200);
+    writeState(file, state, fsMod);
+  }
+  return state;
+}
+
+/**
  * can the dispatcher spawn another run right now? respects the
  * concurrency cap (design default 3, env-overridable).
  */
