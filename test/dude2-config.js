@@ -71,3 +71,12 @@ test("default config dir does not collide with v1 on this machine", () => {
   const cfg = loadConfig();
   assert.equal(assertIsolation(cfg), true);
 });
+
+test("obsidianDir: env-overridable (DUDE2_OBSIDIAN_DIR), sane default — v1 agent needs it at module load", () => {
+  // default must be set (v1 index.js path.join's it at import time; an
+  // unset OBSIDIAN_DIR crashed every dude2 run on 2026-11-13)
+  assert.equal(loadConfig(CLEAN_ENV).obsidianDir, "/home/tester/vault");
+  // env override wins (nix rule)
+  const cfg = loadConfig({ ...CLEAN_ENV, DUDE2_OBSIDIAN_DIR: "/x/vault" });
+  assert.equal(cfg.obsidianDir, "/x/vault");
+});

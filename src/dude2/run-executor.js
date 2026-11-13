@@ -37,6 +37,9 @@ export function buildRunInvocation(cfg, entry, opts = {}) {
     DUDE_CONFIG_DIR: cfg.configDir,
     DUDE_WORKING_DIR: cfg.workspace,
     PI_SESSION_DIR: runSessionDir,
+    // v1 index.js does path.join(process.env.OBSIDIAN_DIR, ...) at module
+    // load — undefined here crashed every run (see task doc 2026-11-13)
+    OBSIDIAN_DIR: cfg.obsidianDir,
     DUDE_MODEL: cfg.model,
     DUDE_MODEL_PROVIDER: cfg.modelProvider,
     DUDE_FALLBACK_MODEL: cfg.fallbackModel,
