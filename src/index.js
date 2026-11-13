@@ -623,6 +623,18 @@ async function runCycle(message = null, sessionFileToResume = null) {
       : {}),
   });
 
+  // load the loader's resources (extensions, skills) before the session
+  // is built from them. pi's sdk only reload()s when it constructs its own
+  // loader — with a loader passed in, getExtensions() would otherwise
+  // return an empty result forever and no extension tools would register.
+  // live incident 2026-11-13: dude2 runs exited 0 but replies never reached
+  // discord because discord_send (dude2 api-extension) never registered.
+  await resourceLoader.reload();
+  log(
+    `runCycle: resources loaded (${resourceLoader.getExtensions().extensions.length} extensions, ` +
+      `${resourceLoader.getExtensions().errors.length} errors)`,
+  );
+
   // Use default tools for custom cwd
   log("runCycle: creating agent session...");
   let sessionManager;
