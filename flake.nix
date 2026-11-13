@@ -1033,6 +1033,14 @@
                 type = lib.types.str;
                 default = "${cfg.configDirectory}/logs";
               };
+              obsidianDir = lib.mkOption {
+                type = lib.types.str;
+                default = "${config.home.homeDirectory}/vault";
+                description = ''
+                  Obsidian vault path. REQUIRED by the run env: the v1 agent
+                  binary dude2 delegates to reads OBSIDIAN_DIR at module load
+                  (tasks file paths) — unset it and every run crashes.'';
+              };
               discordTokenRef = lib.mkOption {
                 type = lib.types.str;
                 default = "op://AI/dude 2 discord token/password";
