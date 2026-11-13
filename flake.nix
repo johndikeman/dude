@@ -1050,6 +1050,11 @@
                 type = lib.types.int;
                 default = 3;
               };
+              openrouterApiKeyRef = lib.mkOption {
+                type = lib.types.str;
+                default = "op://AI/OpenRouter API Key - pi-ovhcloud-vps/credential";
+                description = "1Password ref for the openrouter api key used by runs.";
+              };
               waitTimer = {
                 enable = lib.mkOption { type = lib.types.bool; default = true; };
                 interval = lib.mkOption { type = lib.types.str; default = "*:0/15"; };
@@ -1082,6 +1087,10 @@
                         DUDE2_LOG_DIR=${cfg.logDir}
                         DUDE2_MAX_CONCURRENT_RUNS=${toString cfg.maxConcurrentRuns}
                         DUDE2_DISCORD_TOKEN=${cfg.discordTokenRef}
+                        # resolved by the wrapping `op run --env-file` (v1's
+                        # .opvars pattern) — without it runs exit with
+                        # "No API key found for openrouter"
+                        OPENROUTER_API_KEY=${cfg.openrouterApiKeyRef}
                       '';
                     in
                     "${pkgs._1password-cli}/bin/op run --env-file ${envFile} -- ${pkg}/bin/dude2-dispatch";
