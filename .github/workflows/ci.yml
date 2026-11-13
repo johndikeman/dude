@@ -2,14 +2,20 @@ name: CI/CD
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dude2 ]
   pull_request:
     branches: [ main ]
 
+# propose-vps-update runs independently on BOTH main and dude2:
+# main pushes bump the `dude` input, dude2 pushes bump the `dude2` input
+# (dude2 lives on its own branch until we're ready to cut over fully).
 jobs:
   propose-vps-update:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dude2')
+    env:
+      DUDE_INPUT_NAME: ${{ github.ref == 'refs/heads/main' && 'dude' || 'dude2' }}
+      DUDE_BRANCH_NAME: ${{ github.ref == 'refs/heads/main' && 'dude' || 'dude2' }}
     steps:
       - name: Load secrets from 1Password
         uses: 1password/load-secrets-action@v2
@@ -29,8 +35,8 @@ jobs:
           gh repo clone johndikeman/dotfiles 
           cd dotfiles 
           git checkout vps_nix 
-          git checkout -b update-dude-${{github.sha}} 
-          nix flake update dude 
+          git checkout -b update-${DUDE_BRANCH_NAME}-${{github.sha}} 
+          nix flake update $DUDE_INPUT_NAME 
           git add flake.lock 
           git config --global user.email "dude@johnf.art"
           git config --global user.name "dude"
@@ -41,9 +47,9 @@ jobs:
             echo "flake.lock already current; nothing to update"
             exit 0
           fi
-          git commit -m "chore: update dude to ${{github.sha}}" 
+          git commit -m "chore: update $DUDE_INPUT_NAME to ${{github.sha}}" 
           gh auth setup-git
-          git push origin update-dude-${{github.sha}}
+          git push origin update-${DUDE_BRANCH_NAME}-${{github.sha}}
       - name: open pr
         run: |
           cd dotfiles
