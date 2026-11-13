@@ -1070,6 +1070,7 @@
                         DUDE2_CONFIG_DIR=${cfg.configDirectory}
                         DUDE2_WORKSPACE=${cfg.workingDirectory}
                         DUDE2_SESSION_DIR=${cfg.sessionDir}
+                        DUDE2_OBSIDIAN_DIR=${cfg.obsidianDir}
                         DUDE2_LOG_DIR=${cfg.logDir}
                         DUDE2_MAX_CONCURRENT_RUNS=${toString cfg.maxConcurrentRuns}
                         DUDE2_DISCORD_TOKEN=${cfg.discordTokenRef}

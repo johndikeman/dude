@@ -29,6 +29,8 @@ const sessionDir = path.join(cfg.sessionDir, runId);
 process.env.PI_SESSION_DIR = sessionDir;
 process.env.DUDE_CONFIG_DIR = cfg.configDir;
 process.env.DUDE_WORKING_DIR = cfg.workspace;
+// v1 agent reads OBSIDIAN_DIR at module load — never let it be undefined
+process.env.OBSIDIAN_DIR = process.env.OBSIDIAN_DIR || cfg.obsidianDir;
 
 const impl = cfg.runImpl || defaultV1AgentPath();
 const args = [...process.argv.slice(2)];

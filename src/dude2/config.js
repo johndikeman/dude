@@ -18,6 +18,10 @@ export const PATH_SPECS = {
   configDir: { envVar: "DUDE2_CONFIG_DIR" },
   workspace: { envVar: "DUDE2_WORKSPACE" },
   sessionDir: { envVar: "DUDE2_SESSION_DIR" },
+  // the v1 agent binary dude2-run delegates to reads OBSIDIAN_DIR at module
+  // load (tasks file paths) — it must be set or every run crashes instantly
+  // (v1 run crash, 2026-11-13: pings to dude 2 died with ERR_INVALID_ARG_TYPE)
+  obsidianDir: { envVar: "DUDE2_OBSIDIAN_DIR" },
   queueDb: { envVar: "DUDE2_QUEUE_DB" },
   agentsStateFile: { envVar: "DUDE2_AGENTS_STATE_FILE" },
   logDir: { envVar: "DUDE2_LOG_DIR" },
@@ -42,6 +46,7 @@ export function loadConfig(env = process.env) {
     configDir,
     workspace: env.DUDE2_WORKSPACE || path.join(env.HOME || "/tmp", "dude2-workspace"),
     sessionDir: env.DUDE2_SESSION_DIR || under("sessions"),
+    obsidianDir: env.DUDE2_OBSIDIAN_DIR || path.join(env.HOME || "/tmp", "vault"),
     queueDb: env.DUDE2_QUEUE_DB || under("queue.db"),
     agentsStateFile: env.DUDE2_AGENTS_STATE_FILE || under("agents-state.json"),
     logDir: env.DUDE2_LOG_DIR || under("logs"),
