@@ -25,15 +25,32 @@ export async function createGateway(cfg, { onMessage } = {}) {
   client.on("error", () => {}); // crash guard lives at process level
 
   const messages = [];
+  // filled after login — used to tell "a tag for THIS bot" apart from
+  // a tag for any other bot sharing the channel (live bug 2026-11-15:
+  // tags to dude 1 triggered dude 2 runs because nothing filtered them)
+  let ownBotId = null;
+
   client.on("messageCreate", (message) => {
     if (message.author?.bot) return;
+    const mentionedUs =
+      !!ownBotId &&
+      (message.mentions?.users?.has(ownBotId) ||
+        (message.content || "").includes(`<@${ownBotId}>`));
+    const isDm = !!message.channel?.isDMBased?.();
     const info = {
       channelId: message.channel?.id ?? message.channelId,
       content: message.content,
       messageId: message.id,
+      mentionedUs,
+      isDm,
     };
     messages.push(info);
     onMessage?.(info);
+  });
+
+  // discord.js v14 renamed `ready` to `clientReady` (both emitted for now)
+  client.once(client.Events?.ClientReady ?? "ready", () => {
+    ownBotId = client.user?.id ?? null;
   });
 
   await client.login(cfg.discordToken);

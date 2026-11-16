@@ -84,6 +84,19 @@ export function ingestDiscordMessage(db, { channelId, content, messageId, thread
 }
 
 /**
+ * should a gateway message become a run? only when THIS bot was tagged
+ * (or DM'd / it's a reply in an existing run's thread). without this,
+ * every message the gateway sees — including tags aimed at other bots
+ * like dude 1 — fired a dude 2 run (live bug 2026-11-15).
+ */
+export function shouldIngestDiscord(msg, existingRun = null) {
+  if (existingRun) return true; // reply in a run's thread re-prompts that run
+  if (msg?.mentionedUs) return true;
+  if (msg?.isDm) return true;
+  return false;
+}
+
+/**
  * ingest a file drop (v1 pending-stage.json pattern): {"project": "...",
  * "stage": "..."} or a freeform {context, purpose} object. the file is
  * consumed (deleted) after ingest.
@@ -264,6 +277,7 @@ if (isMain) {
         onMessage: (msg) => {
           // us2.1: a reply inside a run's thread re-prompts that same run
           const existingRun = latestRunForChannel(db, msg.channelId);
+          if (!shouldIngestDiscord(msg, existingRun)) return; // tag was for another bot
           ingestDiscordMessage(db, { ...msg, threadToRun: existingRun ? { [msg.channelId]: existingRun } : {} });
         },
       });
