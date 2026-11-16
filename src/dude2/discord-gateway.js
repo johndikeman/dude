@@ -10,6 +10,32 @@
 import { Client, GatewayIntentBits, Partials } from "discord.js";
 
 /**
+ * decide whether a discord message should be ingested into dude2's queue.
+ * mirrors dude1's trigger rules (src/index.js): a direct tag of this bot,
+ * a reply to a message authored by this bot, or any non-bot DM.
+ * everything else is ignored — without this filter dude2 hijacks every
+ * message in shared channels, including tags aimed at dude1.
+ *
+ * exported for unit testing; the real gateway calls it from messageCreate.
+ */
+export async function shouldIngest(clientUserId, message) {
+  if (!message || message.author?.bot) return false;
+  if (!message.guild) return true; // DMs always trigger
+  // direct tag of this bot
+  if (message.mentions?.has?.(clientUserId)) return true;
+  // reply to one of our own messages (5s hard timeout, same as dude1 —
+  // the REST fetchReference call can hang on rate limits)
+  if (message.reference?.messageId) {
+    const referenced = await Promise.race([
+      message.fetchReference(),
+      new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]).catch(() => null);
+    if (referenced?.author?.id === clientUserId) return true;
+  }
+  return false;
+}
+
+/**
  * create a logged-in client that calls onMessage({channelId, content,
  * messageId}) for every relevant message. returns { client, close() }.
  */
@@ -25,8 +51,8 @@ export async function createGateway(cfg, { onMessage } = {}) {
   client.on("error", () => {}); // crash guard lives at process level
 
   const messages = [];
-  client.on("messageCreate", (message) => {
-    if (message.author?.bot) return;
+  client.on("messageCreate", async (message) => {
+    if (!(await shouldIngest(client.user.id, message))) return;
     const info = {
       channelId: message.channel?.id ?? message.channelId,
       content: message.content,
