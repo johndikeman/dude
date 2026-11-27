@@ -19,10 +19,28 @@
  */
 
 import process from "process";
+import { parsePurposeArgs } from "./purpose.js";
 
 /** default cap: 4h — pm agent cycles run ~20-45min; the longest sane
  * full-task run (browser-heavy searches) should still fit well under. */
 export const DEFAULT_MAX_RUNTIME_MS = 4 * 60 * 60 * 1000;
+
+/** default cap for eng-orchestrator STAGE runs: 12h. live-hardware stages
+ * (e.g. offgridusb provisioning) legitimately run 7h+ and model-api/ssh
+ * stalls eat wall clock with ~0 CPU, so the regular 4h cap silently killed
+ * stage runs before they could post their summary (seen live 2026-11-26/27:
+ * two offgridusb-2.0 UA stage runs died at the 4h cap with zero trace).
+ * env: DUDE_STAGE_MAX_RUNTIME_MS (ms, "0" disables the cap). */
+export const DEFAULT_STAGE_MAX_RUNTIME_MS = 12 * 60 * 60 * 1000;
+
+/** parse the stage-run cap; 0 or a negative number disables the cap */
+export function stageRuntimeMs(env = process.env) {
+  const raw = env.DUDE_STAGE_MAX_RUNTIME_MS;
+  if (raw == null || raw === "") return DEFAULT_STAGE_MAX_RUNTIME_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return DEFAULT_STAGE_MAX_RUNTIME_MS;
+  return Math.max(0, parsed);
+}
 
 /** grace between "abort session" and the hard kill */
 export const DEFAULT_HARD_KILL_GRACE_MS = 60 * 1000;
@@ -37,6 +55,22 @@ export function maxRuntimeMs(env = process.env) {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return DEFAULT_MAX_RUNTIME_MS;
   return Math.max(0, parsed);
+}
+
+/** cap for THIS run: eng-orchestrator stage runs (purpose eng-orchestrator
+ * with `stage=` in the context, as dispatched by wait-runner.js) get the
+ * longer stage cap (DUDE_STAGE_MAX_RUNTIME_MS, default 12h) instead of the
+ * regular 4h — live-hardware stages legitimately run 7h+. the in-agent cap
+ * is armed slightly SMALLER than the stage unit's systemd RuntimeMaxSec
+ * (stageRuntimeMaxSec in wait-runner.js) so the graceful abort+lock-release
+ * path completes before systemd kills the whole cgroup. */
+export function runtimeCapMsForRun(argv = process.argv, env = process.env) {
+  const { purpose, context } = parsePurposeArgs(argv);
+  const isStageRun = purpose === "eng-orchestrator" && /\bstage=/.test(context || "");
+  if (!isStageRun) return maxRuntimeMs(env);
+  const stageMs = stageRuntimeMs(env);
+  if (!stageMs || stageMs <= 0) return 0;
+  return Math.max(0, stageMs - DEFAULT_HARD_KILL_GRACE_MS);
 }
 
 function fmtDuration(ms) {

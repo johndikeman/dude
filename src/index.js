@@ -42,7 +42,7 @@ import {
   acquireLockOrExit,
   releaseLock,
 } from "./agent-lock.js";
-import { startRuntimeCap, maxRuntimeMs } from "./runtime-cap.js";
+import { startRuntimeCap, maxRuntimeMs, runtimeCapMsForRun } from "./runtime-cap.js";
 import {
   createStallWatchdog,
   stallMs as stallWatchdogMs,
@@ -438,7 +438,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
   // the session at the soft cap and hard-kills (exit 124) after grace.
   // releaseLockAndStopCap() below disarms it when the run ends.
   stopRuntimeCap = startRuntimeCap({
-    ms: maxRuntimeMs(),
+    ms: runtimeCapMsForRun(),
     log,
     session: null, // session doesn't exist yet; re-armed with it below
     releaseFn: () => releaseLock(),
@@ -639,7 +639,7 @@ async function runCycle(message = null, sessionFileToResume = null) {
   // can abort it (the pre-session cap could only hard-kill).
   if (stopRuntimeCap) stopRuntimeCap();
   stopRuntimeCap = startRuntimeCap({
-    ms: maxRuntimeMs(),
+    ms: runtimeCapMsForRun(),
     log,
     session,
     releaseFn: () => releaseLock(),
