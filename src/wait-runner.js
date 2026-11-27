@@ -32,7 +32,9 @@ import path from "path";
 import { spawn } from "child_process";
 import { pathToFileURL, fileURLToPath } from "url";
 import { isAgentRunning } from "./agent-lock.js";
-import { maxRuntimeMs } from "./runtime-cap.js";
+import { maxRuntimeMs, stageRuntimeMs } from "./runtime-cap.js";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
 /** systemd RuntimeMaxSec for detached wait-fired agent runs (passed as
  * --property; the --runtime-maxsec shorthand was removed in systemd 259).
@@ -40,6 +42,17 @@ import { maxRuntimeMs } from "./runtime-cap.js";
  * abort gets a chance before systemd kills the cgroup). 0/null disables. */
 export function defaultRuntimeMaxSec(env = process.env) {
   const ms = maxRuntimeMs(env);
+  return ms > 0 ? Math.ceil(ms / 1000) : null;
+}
+
+/** systemd RuntimeMaxSec for STAGE units — env-overridable via
+ * DUDE_STAGE_MAX_RUNTIME_MS, default 12h (see runtime-cap.js for why:
+ * the 4h default cap killed live-hardware stage runs before they could
+ * post their summary — silent deaths 2026-11-26/27). the in-agent cap
+ * for stage runs (src/index.js) is armed slightly SMALLER than this so
+ * the graceful abort+release path fires before systemd kills the cgroup. */
+export function stageRuntimeMaxSec(env = process.env) {
+  const ms = stageRuntimeMs(env);
   return ms > 0 ? Math.ceil(ms / 1000) : null;
 }
 import { readLastRun, newerThan, defaultLastRunFile } from "./run-result.js";
@@ -364,6 +377,67 @@ export function clearPendingStage(file = defaultPendingStageFile()) {
   try { fs.unlinkSync(file); } catch { /* already gone */ }
 }
 
+export function defaultLastStageFile() {
+  return process.env.DUDE_LAST_STAGE_FILE ||
+    path.join(
+      process.env.DUDE_CONFIG_DIR || path.join(process.env.HOME || "/tmp", ".config/dude"),
+      "last-stage.json",
+    );
+}
+
+/** remember the most recently dispatched stage run so a later tick can
+ * detect a timeout kill (Result=timeout) and re-queue it. */
+export function recordLastStage({ project, stage, unit }, file = defaultLastStageFile()) {
+  fs.writeFileSync(file, JSON.stringify({
+    project, stage, unit, dispatchedAt: new Date().toISOString(),
+  }));
+}
+
+export function readLastStage(file = defaultLastStageFile()) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object") return null;
+    const { project, stage, unit } = parsed;
+    if (typeof project !== "string" || !project.trim()) return null;
+    if (typeof stage !== "string" || !stage.trim()) return null;
+    if (typeof unit !== "string" || !unit.trim()) return null;
+    return { project: project.trim(), stage: stage.trim(), unit: unit.trim() };
+  } catch {
+    return null;
+  }
+}
+
+const execFileAsync = promisify(execFile);
+
+/** systemd Result of a (user) transient unit: "success"/"failed"/
+ * "timeout"/... — null when the unit doesn't exist or systemctl fails. */
+export async function stageUnitResult(unit, execFn = execFileAsync) {
+  try {
+    const { stdout } = await execFn("systemctl", ["show", "--user", "-p", "Result", "--value", unit]);
+    const value = String(stdout).trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+/** timeout-aware re-dispatch: if the most recent stage unit exited via the
+ * wall-clock cap (Result=timeout / exit 124) and nothing is already queued,
+ * write the pending-stage file so the next tick re-fires it. the fresh
+ * stage run resumes from the project doc's pipeline state (checkpointed by
+ * the SKILL.md standing orders), so a mid-run kill never strands the
+ * pipeline waiting forever. returns what was re-queued, or null. */
+export async function redispatchTimedOutStage({ pendingFile = defaultPendingStageFile(), lastFile = defaultLastStageFile(), execFn, log = console.error } = {}) {
+  if (readPendingStage(pendingFile)) return null; // something already queued
+  const last = readLastStage(lastFile);
+  if (!last) return null;
+  const result = await stageUnitResult(last.unit, execFn);
+  if (result !== "timeout") return null;
+  fs.writeFileSync(pendingFile, JSON.stringify({ project: last.project, stage: last.stage }));
+  log(`[wait] stage ${last.unit} exited via runtime cap (Result=timeout); re-queued ${last.project}/${last.stage} for re-dispatch`);
+  return { requeued: true, project: last.project, stage: last.stage, unit: last.unit };
+}
+
 /** systemd-safe unit name for a stage run */
 export function stageUnitName(project, stage) {
   return `dude-eng-${project}-${stage}`.replace(/[^a-zA-Z0-9_.-]/g, "-");
@@ -387,12 +461,16 @@ export async function dispatchPendingStage({ stateFile, spawnFn } = {}) {
     "--context", `project=${stage.project} stage=${stage.stage}`,
   ];
   const unit = stageUnitName(stage.project, stage.stage);
-  const detached = await spawnDetachedAgent({ args, unit, spawnFn });
+  // stage runs get their own (longer) wall-clock cap: DUDE_STAGE_MAX_RUNTIME_MS,
+  // default 12h — the regular 4h cap killed live-hardware stage runs silently
+  // (offgridusb-2.0 UA, 2026-11-26/27)
+  const detached = await spawnDetachedAgent({ args, unit, spawnFn, runtimeMaxSec: stageRuntimeMaxSec() });
   if (!detached.ok) {
     console.error(`[wait] stage dispatch failed (${detached.error}); keeping pending file for retry`);
     return { dispatched: false, error: detached.error, project: stage.project, stage: stage.stage };
   }
   clearPendingStage();
+  recordLastStage({ project: stage.project, stage: stage.stage, unit });
   console.error(`[wait] stage dispatch: ${unit} started`);
   return { dispatched: true, unit, project: stage.project, stage: stage.stage };
 }
@@ -663,6 +741,10 @@ export async function main(argv = process.argv.slice(2)) {
     // checking functions (their outcomes affect whether things re-fire)
     if (invoke) {
       await processPendingRebaselines({});
+      // timeout-aware re-dispatch: a stage unit killed by its wall-clock cap
+      // gets re-queued so the pipeline resumes instead of waiting forever
+      const redisp = await redispatchTimedOutStage({});
+      if (redisp) console.error(`[wait] ${redisp.unit}: timed out, re-queued ${redisp.project}/${redisp.stage}`);
       // stage runs queued by the eng-orchestrator (pending-stage file)
       // go through the same robust detached spawn as wait-fired runs
       const stage = await dispatchPendingStage({});

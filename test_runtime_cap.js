@@ -167,3 +167,36 @@ test("cap survives a session.abort() that throws synchronously", () => {
   assert.match(lines[0], /runtime cap exceeded/);
   assert.deepEqual(exits, [RUNTIME_CAP_EXIT_CODE], "hard kill still happens");
 });
+/* ------------------------------------------------------------------ */
+/* per-run cap selection: stage runs get the longer cap                */
+/* ------------------------------------------------------------------ */
+
+import { runtimeCapMsForRun, DEFAULT_STAGE_MAX_RUNTIME_MS } from "./src/runtime-cap.js";
+
+test("runtimeCapMsForRun: regular runs keep the 4h default", () => {
+  assert.equal(runtimeCapMsForRun([]), DEFAULT_MAX_RUNTIME_MS);
+  assert.equal(runtimeCapMsForRun(["--purpose", "eng-orchestrator"]), DEFAULT_MAX_RUNTIME_MS);
+  assert.equal(runtimeCapMsForRun(["--once", "--purpose", "prediction-markets", "--context", "project=x"]), DEFAULT_MAX_RUNTIME_MS);
+});
+
+test("runtimeCapMsForRun: eng stage runs get the stage cap (12h) minus the hard-kill grace", () => {
+  const args = ["--once", "--purpose", "eng-orchestrator", "--context", "project=offgridusb-2.0 stage=implement"];
+  const expected = DEFAULT_STAGE_MAX_RUNTIME_MS - 60 * 1000;
+  assert.equal(runtimeCapMsForRun(args), expected);
+  // unit cap (systemd RuntimeMaxSec) must stay larger than the in-agent cap
+  assert.ok(expected < DEFAULT_STAGE_MAX_RUNTIME_MS);
+});
+
+test("runtimeCapMsForRun: stage cap is env-overridable and 0 disables", () => {
+  const args = ["--purpose", "eng-orchestrator", "--context", "stage=test"];
+  const saved = process.env.DUDE_STAGE_MAX_RUNTIME_MS;
+  try {
+    process.env.DUDE_STAGE_MAX_RUNTIME_MS = "1800000"; // 30m
+    assert.equal(runtimeCapMsForRun(args), 1800000 - 60 * 1000);
+    process.env.DUDE_STAGE_MAX_RUNTIME_MS = "0";
+    assert.equal(runtimeCapMsForRun(args), 0); // cap disabled
+  } finally {
+    if (saved === undefined) delete process.env.DUDE_STAGE_MAX_RUNTIME_MS;
+    else process.env.DUDE_STAGE_MAX_RUNTIME_MS = saved;
+  }
+});

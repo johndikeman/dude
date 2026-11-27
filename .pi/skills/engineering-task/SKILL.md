@@ -53,6 +53,25 @@ never put logs under the top three sections. never touch ~/vault/ai-tasks.md.
    to implement). after 2 failed loops, escalate to john and stop. on
    success, set `stage: done (merged?)` — john merges the PR.
 
+## checkpointing (standing orders for every stage run)
+
+stage runs can legitimately run for many hours (live-hardware stages run
+7h+; the wall-clock cap for stage units is 12h). a mid-run kill must never
+leave zero trace, so:
+
+- after EACH completed sub-step, append a one-liner to the project doc's
+  `## log / history` (what was done, what's next). this is the resume point.
+- post interim discord pings at meaningful milestones: stage start, major
+  commits pushed, blockers, anything that will outlast ~2h of wall clock.
+  short and factual; these are progress signals, not summaries.
+- if you resume a stage whose pipeline line is still in an in-progress
+  state, read the log tail first and continue from the last completed
+  sub-step — don't redo finished work.
+- a killed stage run is detected and re-queued automatically by the
+  wait-runner (systemd Result=timeout → pending-stage.json re-written); the
+  fresh run resumes from the doc, which is exactly why the checkpointing
+  above is mandatory, not optional.
+
 ## supervisor rules (runs with no `stage=` in context)
 
 - scan ai-projects.md; for each unchecked project whose status line says
